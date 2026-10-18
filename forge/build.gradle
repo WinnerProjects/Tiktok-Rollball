@@ -14,10 +14,7 @@ mixin {
 
 legacyForge {
     version = "${minecraft_version}-${forge_version}"
-    parchment {
-        minecraftVersion = parchment_minecraft
-        mappingsVersion = parchment_version
-    }
+
     runs {
         client {
             client()
