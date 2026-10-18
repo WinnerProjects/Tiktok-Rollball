@@ -1,0 +1,30 @@
+plugins {
+    id 'multiloader-common'
+    id 'fabric-loom'
+}
+
+description = project.findProperty("description") ?: mod_name
+
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraft_version}"
+    mappings loom.layered {
+        officialMojangMappings()
+    }
+    compileOnly group: 'org.spongepowered', name: 'mixin', version: '0.8.7'
+}
+
+configurations {
+    commonJava {
+        canBeResolved = false
+        canBeConsumed = true
+    }
+    commonResources {
+        canBeResolved = false
+        canBeConsumed = true
+    }
+}
+
+artifacts {
+    commonJava sourceSets.main.java.sourceDirectories.singleFile
+    commonResources sourceSets.main.resources.sourceDirectories.singleFile
+}
