@@ -17,7 +17,7 @@ public final class KatamariMovement {
         double restoredMotionX = player.getX() - player.xOld;
         double restoredMotionZ = player.getZ() - player.zOld;
 
-        player.hasImpulse = true;
+        player.needsSync = true;
         player.setDeltaMovement(restoredMotionX, bounceVelocityY, restoredMotionZ);
 
         if (player instanceof ServerPlayer serverPlayer) {
