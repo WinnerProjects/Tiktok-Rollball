@@ -1,6 +1,6 @@
 # RollBall
 
-RollBall, KatamariIO projesinden türetilmiş bir Minecraft Fabric mod projesidir.
+RollBall, KatamariIO projesinden türetilmiş, **sadece Fabric** için hazırlanmış bir Minecraft modudur (tek modüllü Gradle projesi).
 
 ## Özellikler
 
@@ -35,3 +35,20 @@ Kaynak proje başlangıçta Minecraft 1.20.1 için hazırlanmıştır. `gradle.p
 1.21.11'e taşınacak şekilde güncellenmiştir; ancak Minecraft 1.20.1 → 1.21.11 geçişi API, mapping,
 Mixin ve Gradle eklentisi değişiklikleri içerir. Bu kaynak paketi, hedef ortamda derlenip oyunda
 test edilmeden **hazır/çalışan 1.21.11 JAR'ı olarak kabul edilmemelidir**.
+
+## Proje yapısı
+
+Forge ve multiloader (`common`/`fabric`/`buildSrc`) yapısı kaldırıldı. Tüm kaynak kod `src/main` altındadır;
+derleme için `./gradlew build` yeterlidir, çıktı `build/libs` içinde oluşur.
+
+## 1.21.11 portu
+
+Kod 1.20.1 API'sinden **Minecraft 1.21.11 (Fabric)** API'sine taşındı:
+
+- `ResourceLocation` -> `Identifier`, ağ paketleri `CustomPacketPayload` + `StreamCodec`, özel `EntityDataSerializer`'lar `codec()` ile
+- oyuncu verisi kaydı `ValueInput`/`ValueOutput`, `defineSynchedData(Builder)`, komut izinleri `Commands.hasPermission(...)`
+- hareket: `LivingEntity#travelInAir` (`LivingEntityTravelMixin`), zıplama `getJumpPower`, boyut `EntityDimensions` (göz yüksekliği dahil)
+- render: `LivingEntityRenderer#submit` + `SubmitNodeCollector` (`submitCustomGeometry` / `submitBlock`), `RenderTypes.entityCutoutNoCull`
+- istemci: `KeyboardInput.keyPresses` (`Input` record), `Camera#getMaxZoom(float)`
+
+Bu port derleme ortamı olmadan yazıldı; ilk `./gradlew build` çıktısındaki hatalara göre küçük düzeltmeler gerekebilir.

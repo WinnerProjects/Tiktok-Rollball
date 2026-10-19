@@ -1,0 +1,24 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.github.tacowasa059.katamariio.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "common.BlockCollisionsMixin",
+    "common.EntityMixin",
+    "common.LivingEntityMixin",
+    "common.LivingEntityTravelMixin",
+    "common.PlayerMixin"
+  ],
+  "client": [
+    "client.AvatarRenderStateMixin",
+    "client.AvatarRendererMixin",
+    "client.CameraMixin",
+    "client.GameRendererMixin",
+    "client.KeyboardInputMixin",
+    "client.LivingEntityRendererMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
