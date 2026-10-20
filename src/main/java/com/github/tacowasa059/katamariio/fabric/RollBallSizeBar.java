@@ -77,7 +77,7 @@ public final class RollBallSizeBar {
     }
 
     private static void updateBar(ServerPlayer player, ServerBossEvent bar) {
-        float size = Math.max(0.0f, ((ICustomPlayerData) player).katamariIO$getRenderSize());
+        float size = Math.max(0.0f, ((ICustomPlayerData) player).katamariIO$getSize());
         bar.setName(Component.literal(String.format(java.util.Locale.ROOT, "Boyut: %.1f Blok", size)));
         bar.setProgress(Math.max(0.0f, Math.min(1.0f, size / 20.0f)));
     }

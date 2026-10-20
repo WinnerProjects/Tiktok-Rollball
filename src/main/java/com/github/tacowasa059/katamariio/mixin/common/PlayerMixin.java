@@ -433,6 +433,8 @@ public abstract class PlayerMixin implements ICustomPlayerData {
         boolean collisionChanged = Math.abs(entity.getEntityData().get(sphericalPlayerMod$SIZE) - newCollisionSize) > 1.0E-4f;
         entity.getEntityData().set(sphericalPlayerMod$SIZE, newCollisionSize);
         if (collisionChanged) {
+            // The visible sphere follows the real size, otherwise the inner blocks get pruned and leave a gap.
+            entity.getEntityData().set(sphericalPlayerMod$RENDER_SIZE, newCollisionSize);
             entity.refreshDimensions();
         }
     }

@@ -21,13 +21,15 @@ import java.util.Optional;
  * This does not depend on the client collision hook / packet, so it keeps working whatever the client does.
  */
 public final class KatamariAbsorb {
-    /** Scan every N ticks. */
-    private static final int SCAN_INTERVAL = 2;
     /** Max blocks glued per scan, keeps big balls from lagging the server. */
-    private static final int MAX_PER_SCAN = 16;
-    /** Blocks stick slightly before they actually touch the ball. */
-    private static final double REACH = 0.3;
-    private static final int MAX_SCAN_RADIUS = 16;
+    private static final int MAX_PER_SCAN = 24;
+    /** Blocks are pulled in from this far outside the ball's surface (blocks) ... */
+    private static final double REACH_BASE = 1.0;
+    /** ... plus this fraction of the ball radius, so bigger balls have a bigger "magnet". */
+    private static final double REACH_PER_RADIUS = 0.3;
+    private static final int MAX_SCAN_RADIUS = 20;
+    /** Attached blocks sit on the surface: block centre this far from the ball surface. */
+    private static final double SURFACE_OFFSET = 0.5;
 
     private KatamariAbsorb() {
     }
@@ -38,14 +40,20 @@ public final class KatamariAbsorb {
             return;
         }
         ICustomPlayerData data = (ICustomPlayerData) player;
-        if (!data.katamariIO$getFlag() || player.tickCount % SCAN_INTERVAL != 0) {
+        if (!data.katamariIO$getFlag()) {
+            return;
+        }
+
+        float radius = data.katamariIO$getSize() / 2.0f;
+        // Small balls scan every tick, big balls (expensive scan) every second tick.
+        int interval = radius < 5.0f ? 1 : 2;
+        if (player.tickCount % interval != 0) {
             return;
         }
 
         Vec3 feet = player.position();
-        float radius = data.katamariIO$getSize() / 2.0f;
         Vec3 center = feet.add(0, radius, 0);
-        double reach = radius + REACH;
+        double reach = radius + REACH_BASE + REACH_PER_RADIUS * radius;
         int range = Math.min(MAX_SCAN_RADIUS, (int) Math.ceil(reach) + 1);
 
         int cx = Mth.floor(center.x);
@@ -117,6 +125,13 @@ public final class KatamariAbsorb {
         Quaternionf inverseBallRotation = new Quaternionf(data.katamariIO$getQuaternion()).invert();
         Vector3f local = new Vector3f((float) relativeWorld.x, (float) relativeWorld.y, (float) relativeWorld.z);
         local.rotate(inverseBallRotation);
+
+        // Blocks that are pulled in from a distance snap onto the ball's surface instead of floating around it.
+        double maxDistance = radius + SURFACE_OFFSET;
+        float distance = local.length();
+        if (distance > maxDistance && distance > 1.0E-4f) {
+            local.mul((float) (maxDistance / distance));
+        }
 
         data.katamariIO$addBlock(block, inverseBallRotation, new Vec3(local.x, local.y, local.z));
         return true;
