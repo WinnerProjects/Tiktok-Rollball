@@ -1,7 +1,9 @@
 package com.github.tacowasa059.katamariio.mixin.common;
 
+import com.github.tacowasa059.katamariio.common.KatamariMovement;
 import com.github.tacowasa059.katamariio.common.accessors.ICustomPlayerData;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
@@ -97,5 +99,28 @@ public abstract class LivingEntityMixin extends Entity {
         BlockPos pos = this.getOnPos(0.500001F);
         float onPosJumpFactor = entity.level().getBlockState(pos).getBlock().getJumpFactor();
         return (double) blockJumpFactor == 1.0 ? onPosJumpFactor : blockJumpFactor;
+    }
+
+    // LivingEntity#causeFallDamage(double, float, DamageSource) since 1.21.5.
+    @Inject(method = "causeFallDamage", at = @At("HEAD"), cancellable = true)
+    private void katamariIO$causeFallDamage(double fallDistance, float damageMultiplier, DamageSource damageSource,
+                                            CallbackInfoReturnable<Boolean> cir) {
+        LivingEntity entity = (LivingEntity) (Object) this;
+        if (entity instanceof Player player) {
+            ICustomPlayerData playerData = (ICustomPlayerData) player;
+            if (playerData.katamariIO$getFlag()) {
+                KatamariMovement.bouncePlayer(player, (float) fallDistance, playerData.katamariIO$getRestitutionCoefficient());
+                cir.setReturnValue(false);
+            }
+        }
+    }
+
+    // LivingEntity overrides isInWall, so the Entity-level hook in EntityMixin alone is not enough.
+    @Inject(method = "isInWall", at = @At("HEAD"), cancellable = true, require = 0)
+    private void katamariIO$isInWall(CallbackInfoReturnable<Boolean> cir) {
+        LivingEntity entity = (LivingEntity) (Object) this;
+        if (entity instanceof Player player && ((ICustomPlayerData) player).katamariIO$getFlag()) {
+            cir.setReturnValue(false);
+        }
     }
 }

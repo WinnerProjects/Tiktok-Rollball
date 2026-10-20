@@ -346,28 +346,12 @@ public abstract class PlayerMixin implements ICustomPlayerData {
         );
     }
 
-    // Player#getStandingEyeHeight / getMyRidingOffset no longer exist: the eye height now lives in EntityDimensions.
-    @Inject(method = {"getDefaultDimensions", "getDimensions"}, at = @At("HEAD"), cancellable = true)
-    public void katamariIO$getDimensions(Pose pose, CallbackInfoReturnable<EntityDimensions> cir) {
-        if (katamariIO$getFlag()) {
-            float size = katamariIO$getSize();
-            cir.setReturnValue(EntityDimensions.scalable(size, size).withEyeHeight(0.85F * size));
-        }
-    }
-
-    @Inject(method = "maybeBackOffFromEdge", at = @At("HEAD"), cancellable = true)
+    // Dimensions moved to Avatar#getDefaultDimensions in 1.21.9 (see AvatarMixin); fall damage is handled in
+    // LivingEntityMixin so it keeps working wherever Player/Avatar declare causeFallDamage.
+    @Inject(method = "maybeBackOffFromEdge", at = @At("HEAD"), cancellable = true, require = 0)
     protected void maybeBackOffFromEdge(Vec3 movement, MoverType moverType, CallbackInfoReturnable<Vec3> cir) {
         if (katamariIO$getFlag()) {
             cir.setReturnValue(movement);
-        }
-    }
-
-    @Inject(method = "causeFallDamage", at = @At("HEAD"), cancellable = true)
-    private void katamariIO$causeFallDamage(double fallDistance, float damageMultiplier, DamageSource damageSource, CallbackInfoReturnable<Boolean> cir) {
-        Player entity = (Player) (Object) this;
-        if (katamariIO$getFlag()) {
-            KatamariMovement.bouncePlayer(entity, (float) fallDistance, katamariIO$getRestitutionCoefficient());
-            cir.setReturnValue(false);
         }
     }
 

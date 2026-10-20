@@ -2,8 +2,10 @@
   "required": true,
   "minVersion": "0.8",
   "package": "com.github.tacowasa059.katamariio.mixin",
+  "refmap": "rollball.refmap.json",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
+    "common.AvatarMixin",
     "common.BlockCollisionsMixin",
     "common.EntityMixin",
     "common.LivingEntityMixin",
