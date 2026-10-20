@@ -1,6 +1,7 @@
 package com.github.tacowasa059.katamariio.mixin.common;
 
 import com.github.tacowasa059.katamariio.KatamariIO;
+import com.github.tacowasa059.katamariio.common.KatamariAbsorb;
 import com.github.tacowasa059.katamariio.common.KatamariMovement;
 import com.github.tacowasa059.katamariio.common.accessors.ICustomPlayerData;
 import com.github.tacowasa059.katamariio.common.networks.S2CPlayerPacket;
@@ -101,6 +102,8 @@ public abstract class PlayerMixin implements ICustomPlayerData {
                     || Math.abs(expectedDimensions.height() - (float) player.getBoundingBox().getYsize()) > 1.0E-4f)) {
                 player.refreshDimensions();
             }
+        } else {
+            KatamariAbsorb.tick(player);
         }
     }
 

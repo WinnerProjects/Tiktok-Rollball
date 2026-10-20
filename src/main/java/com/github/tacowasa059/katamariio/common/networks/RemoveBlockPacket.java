@@ -1,19 +1,14 @@
 package com.github.tacowasa059.katamariio.common.networks;
 
 import com.github.tacowasa059.katamariio.KatamariIO;
-import com.github.tacowasa059.katamariio.common.accessors.ICustomPlayerData;
+import com.github.tacowasa059.katamariio.common.KatamariAbsorb;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.Vec3;
-import org.joml.Quaternionf;
-import org.joml.Vector3f;
 
 public record RemoveBlockPacket(BlockPos pos, Vec3 playerPos) implements CustomPacketPayload {
     public static final CustomPacketPayload.Type<RemoveBlockPacket> TYPE =
@@ -44,29 +39,6 @@ public record RemoveBlockPacket(BlockPos pos, Vec3 playerPos) implements CustomP
         if (serverPlayer == null) {
             return;
         }
-
-        Level level = serverPlayer.level();
-        Block block = level.getBlockState(pos).getBlock();
-        if (block.equals(Blocks.AIR) || block.equals(Blocks.CAVE_AIR) || block.equals(Blocks.VOID_AIR)) {
-            return;
-        }
-
-        level.setBlockAndUpdate(pos, Blocks.AIR.defaultBlockState());
-        level.removeBlockEntity(pos);
-
-        ICustomPlayerData playerData = (ICustomPlayerData) serverPlayer;
-        if (!playerData.katamariIO$getFlag()) {
-            return;
-        }
-
-        float radius = playerData.katamariIO$getSize() / 2.0f;
-        Vec3 center = playerPos.add(0, radius, 0);
-        Vec3 relativePosWorld = new Vec3(pos.getX() + 0.5f, pos.getY() + 0.5f, pos.getZ() + 0.5f).subtract(center);
-        Quaternionf inverseBallRotation = new Quaternionf(playerData.katamariIO$getQuaternion()).invert();
-        Vector3f relativePosLocal = new Vector3f((float) relativePosWorld.x, (float) relativePosWorld.y, (float) relativePosWorld.z);
-        relativePosLocal.rotate(inverseBallRotation);
-
-        playerData.katamariIO$addBlock(block, inverseBallRotation,
-                new Vec3(relativePosLocal.x, relativePosLocal.y, relativePosLocal.z));
+        KatamariAbsorb.absorb(serverPlayer.level(), serverPlayer, pos, playerPos);
     }
 }
