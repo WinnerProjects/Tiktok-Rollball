@@ -79,7 +79,7 @@ public abstract class PlayerMixin implements ICustomPlayerData {
     private static final int KATAMARI_MAX_ATTACHED_BLOCKS = 2500;
     /** Volume every absorbed block adds to the ball (1.0 = a full block). Lower = slower growth. */
     @Unique
-    private static final float KATAMARI_GROWTH_VOLUME_PER_BLOCK = 0.6f;
+    private static final float KATAMARI_GROWTH_VOLUME_PER_BLOCK = 0.15f;
     @Unique
     private static final float KATAMARI_MAX_SIZE = 20.0f;
     @Unique
@@ -443,6 +443,9 @@ public abstract class PlayerMixin implements ICustomPlayerData {
         float newSize = Math.round(katamariIO$exactSize * 10.0f) / 10.0f;
         if (Math.abs(newSize - current) > 1.0E-4f) {
             entity.getEntityData().set(sphericalPlayerMod$SIZE, newSize);
+            // Keep the visible sphere in sync with the growing hitbox, otherwise the blocks stick to a
+            // bigger shell than the sphere that is drawn and the ball looks unfinished.
+            entity.getEntityData().set(sphericalPlayerMod$RENDER_SIZE, newSize);
             entity.refreshDimensions();
         }
     }

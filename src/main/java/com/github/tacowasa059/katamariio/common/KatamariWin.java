@@ -28,15 +28,16 @@ import java.util.UUID;
 
 /**
  * Win sequence: when the ball reaches the maximum size a 15..1 countdown is shown in the middle of the screen
- * (3-2-1 run slower), then "+Win" appears and fireworks are launched in a circle around the player.
+ * (15..4 take 1 second each, 3-2-1 run slower), then "+Win" appears and fireworks are launched in a circle around the player.
  */
 public final class KatamariWin {
     private static final float WIN_SIZE = 20.0f;
     private static final int START_VALUE = 15;
-    /** Ticks per number for 15..4 (20 ticks = 1 second). */
-    private static final int NORMAL_TICKS = 20;
-    /** Ticks per number for 3, 2, 1 (slower). */
+    /** Real time per number for 15..4: exactly 1 second, independent of the server tick rate. */
+    private static final long NORMAL_MILLIS = 1000L;
+    /** Ticks per number for 3, 2, 1 (unchanged: 50 ticks = 2.5 seconds). */
     private static final int SLOW_TICKS = 50;
+    private static final long SLOW_MILLIS = SLOW_TICKS * 50L;
 
     private static final int FIREWORK_WAVES = 4;
     private static final int WAVE_INTERVAL_TICKS = 14;
@@ -48,7 +49,7 @@ public final class KatamariWin {
     private static final class State {
         Phase phase = Phase.COUNTDOWN;
         int value = START_VALUE;
-        int ticksLeft;
+        long nextAtMillis;
         int wave;
         int waveTimer;
     }
@@ -90,7 +91,7 @@ public final class KatamariWin {
                 player.connection.send(new ClientboundClearTitlesPacket(true));
                 return;
             }
-            if (--state.ticksLeft > 0) {
+            if (System.currentTimeMillis() < state.nextAtMillis) {
                 return;
             }
             state.value--;
@@ -118,12 +119,12 @@ public final class KatamariWin {
     }
 
     private static int ticksFor(int value) {
-        return value <= 3 ? SLOW_TICKS : NORMAL_TICKS;
+        return value <= 3 ? SLOW_TICKS : 20;
     }
 
     private static void showNumber(ServerPlayer player, State state) {
         int ticks = ticksFor(state.value);
-        state.ticksLeft = ticks;
+        state.nextAtMillis = System.currentTimeMillis() + (state.value <= 3 ? SLOW_MILLIS : NORMAL_MILLIS);
         ChatFormatting color = state.value <= 3 ? ChatFormatting.RED : (state.value <= 8 ? ChatFormatting.GOLD : ChatFormatting.YELLOW);
         player.connection.send(new ClientboundSetTitlesAnimationPacket(0, Math.max(1, ticks - 4), 4));
         player.connection.send(new ClientboundSetTitleTextPacket(

@@ -27,8 +27,8 @@ import java.util.Map;
 public final class KatamariPlayerRenderer {
     public static double MAX_SIZE = 0;
     private static final float KATAMARI_BAKED_RENDER_THRESHOLD = 10.0f;
-    private static final int KATAMARI_BAKED_LAT_BINS = 12;
-    private static final int KATAMARI_BAKED_LON_BINS = 24;
+    private static final int KATAMARI_BAKED_LAT_BINS = 24;
+    private static final int KATAMARI_BAKED_LON_BINS = 48;
     private static final long KATAMARI_BAKED_REBUILD_TICKS = 10L;
     private static final Map<Integer, BakedIndexCache> KATAMARI_BAKED_CACHE = new HashMap<>();
 
@@ -53,8 +53,8 @@ public final class KatamariPlayerRenderer {
         }
 
         float partialTicks = Minecraft.getInstance().getDeltaTracker().getGameTimeDeltaPartialTick(false);
-        float renderSize = playerData.katamariIO$getRenderSize();
         float collisionSize = playerData.katamariIO$getSize();
+        float renderSize = Math.max(playerData.katamariIO$getRenderSize(), collisionSize);
         Quaternionf quaternion = playerData.katamariIO$getInterpolatedQuaternion(partialTicks);
 
         poseStack.pushPose();
