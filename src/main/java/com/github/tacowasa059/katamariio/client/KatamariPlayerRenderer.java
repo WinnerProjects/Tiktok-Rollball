@@ -109,15 +109,7 @@ public final class KatamariPlayerRenderer {
             if (renderSize < KATAMARI_BAKED_RENDER_THRESHOLD && !shouldRenderByHash(vec, i, player.getId(), lodStep)) {
                 continue;
             }
-            Vector3f localNormal = new Vector3f((float) vec.x, (float) vec.y, (float) vec.z);
-            float normalLenSq = localNormal.lengthSquared();
-            if (normalLenSq > 1.0E-6f) {
-                localNormal.normalize();
-                float dot = localNormal.dot(viewDirLocal);
-                if (cameraType == CameraType.THIRD_PERSON_BACK ? dot >= 0.0f : dot <= 0.0f) {
-                    continue;
-                }
-            }
+            // No view-direction culling: every attached block is drawn so the ball looks fully covered.
             Block block = blockList.get(i);
             Quaternionf blockRotation = quaternionfList.get(i);
 

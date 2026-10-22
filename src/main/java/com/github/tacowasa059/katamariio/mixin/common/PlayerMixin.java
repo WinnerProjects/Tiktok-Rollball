@@ -3,6 +3,8 @@ package com.github.tacowasa059.katamariio.mixin.common;
 import com.github.tacowasa059.katamariio.KatamariIO;
 import com.github.tacowasa059.katamariio.common.KatamariAbsorb;
 import com.github.tacowasa059.katamariio.common.KatamariMovement;
+import com.github.tacowasa059.katamariio.common.KatamariWin;
+import net.minecraft.server.level.ServerPlayer;
 import com.github.tacowasa059.katamariio.common.accessors.ICustomPlayerData;
 import com.github.tacowasa059.katamariio.common.networks.S2CPlayerPacket;
 import com.github.tacowasa059.katamariio.common.serializers.ModDataSerializers;
@@ -71,7 +73,17 @@ public abstract class PlayerMixin implements ICustomPlayerData {
     @Unique
     private static final float KATAMARI_BLOCK_EXTENT = 0.5f;
     @Unique
-    private static final float KATAMARI_DP_CUTOFF_OFFSET = 2.0f;
+    private static final float KATAMARI_DP_CUTOFF_OFFSET = 3.0f;
+    /** Upper bound of attached blocks kept/synced; the innermost ones are dropped first. */
+    @Unique
+    private static final int KATAMARI_MAX_ATTACHED_BLOCKS = 2500;
+    /** Volume every absorbed block adds to the ball (1.0 = a full block). Lower = slower growth. */
+    @Unique
+    private static final float KATAMARI_GROWTH_VOLUME_PER_BLOCK = 0.6f;
+    @Unique
+    private static final float KATAMARI_MAX_SIZE = 20.0f;
+    @Unique
+    private float katamariIO$exactSize = -1.0f;
     @Unique
     private static final String SPM_ATTACHED_BLOCKS = "SPM_AttachedBlocks";
     @Unique
@@ -104,6 +116,9 @@ public abstract class PlayerMixin implements ICustomPlayerData {
             }
         } else {
             KatamariAbsorb.tick(player);
+            if (player instanceof ServerPlayer serverPlayer) {
+                KatamariWin.tick(serverPlayer);
+            }
         }
     }
 
@@ -406,35 +421,28 @@ public abstract class PlayerMixin implements ICustomPlayerData {
         return ((Player) (Object) this).getEntityData().get(SPHERICAL_PLAYER_BLOCK_LIST);
     }
 
+    /**
+     * Volume based growth: every absorbed block adds a little volume to the ball. The exact size is kept in a
+     * float so tiny increments are not lost, the synced size moves in 0.1 steps.
+     */
     @Unique
     private void katamariIO$applyBlockRadiusIncremental(Player entity, Vec3 vec3) {
-        katamariIO$ensureBinRadiiInitialized(entity);
-
-        float distance = (float) vec3.length();
-        float blockOuterRadius = distance + KATAMARI_BLOCK_EXTENT;
-        if (distance >= 1.0E-6f) {
-            float nx = (float) (vec3.x / distance);
-            float ny = (float) (vec3.y / distance);
-            float nz = (float) (vec3.z / distance);
-            int index = katamariIO$getAngularBinIndex(nx, ny, nz);
-            if (blockOuterRadius > katamariIO$binMaxRadii[index]) {
-                katamariIO$binMaxRadii[index] = blockOuterRadius;
-            }
+        float current = entity.getEntityData().get(sphericalPlayerMod$SIZE);
+        if (katamariIO$exactSize <= 0.0f || Math.abs(Math.round(katamariIO$exactSize * 10.0f) / 10.0f - current) > 0.051f) {
+            katamariIO$exactSize = current;
+        }
+        if (katamariIO$exactSize >= KATAMARI_MAX_SIZE - 1.0E-3f) {
+            return;
         }
 
-        float collisionRadius = katamariIO$binMaxRadii[0];
-        for (int i = 1; i < katamariIO$binMaxRadii.length; i++) {
-            if (katamariIO$binMaxRadii[i] < collisionRadius) {
-                collisionRadius = katamariIO$binMaxRadii[i];
-            }
-        }
+        double radius = katamariIO$exactSize / 2.0;
+        double addedRadiusCube = KATAMARI_GROWTH_VOLUME_PER_BLOCK * 3.0 / (4.0 * Math.PI);
+        double newRadius = Math.cbrt(radius * radius * radius + addedRadiusCube);
+        katamariIO$exactSize = (float) Math.min(KATAMARI_MAX_SIZE, newRadius * 2.0);
 
-        float newCollisionSize = collisionRadius * 2.0f;
-        boolean collisionChanged = Math.abs(entity.getEntityData().get(sphericalPlayerMod$SIZE) - newCollisionSize) > 1.0E-4f;
-        entity.getEntityData().set(sphericalPlayerMod$SIZE, newCollisionSize);
-        if (collisionChanged) {
-            // The visible sphere follows the real size, otherwise the inner blocks get pruned and leave a gap.
-            entity.getEntityData().set(sphericalPlayerMod$RENDER_SIZE, newCollisionSize);
+        float newSize = Math.round(katamariIO$exactSize * 10.0f) / 10.0f;
+        if (Math.abs(newSize - current) > 1.0E-4f) {
+            entity.getEntityData().set(sphericalPlayerMod$SIZE, newSize);
             entity.refreshDimensions();
         }
     }
@@ -519,6 +527,28 @@ public abstract class PlayerMixin implements ICustomPlayerData {
             keptBlocks.add(blocks.get(i));
             keptQuaternions.add(quaternions.get(i));
             keptPositions.add(pos);
+        }
+
+        if (keptBlocks.size() > KATAMARI_MAX_ATTACHED_BLOCKS) {
+            Integer[] order = new Integer[keptBlocks.size()];
+            for (int i = 0; i < order.length; i++) {
+                order[i] = i;
+            }
+            final List<Vec3> positionsRef = keptPositions;
+            java.util.Arrays.sort(order, (x, y) -> Double.compare(positionsRef.get(y).lengthSqr(), positionsRef.get(x).lengthSqr()));
+            List<Block> cappedBlocks = new ArrayList<>(KATAMARI_MAX_ATTACHED_BLOCKS);
+            List<Quaternionf> cappedQuaternions = new ArrayList<>(KATAMARI_MAX_ATTACHED_BLOCKS);
+            List<Vec3> cappedPositions = new ArrayList<>(KATAMARI_MAX_ATTACHED_BLOCKS);
+            for (int i = 0; i < KATAMARI_MAX_ATTACHED_BLOCKS; i++) {
+                int k = order[i];
+                cappedBlocks.add(keptBlocks.get(k));
+                cappedQuaternions.add(keptQuaternions.get(k));
+                cappedPositions.add(keptPositions.get(k));
+            }
+            keptBlocks = cappedBlocks;
+            keptQuaternions = cappedQuaternions;
+            keptPositions = cappedPositions;
+            changed = true;
         }
 
         if (!changed) {

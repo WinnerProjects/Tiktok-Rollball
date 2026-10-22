@@ -8,6 +8,7 @@
     "common.AvatarMixin",
     "common.BlockCollisionsMixin",
     "common.EntityMixin",
+    "common.ItemEntityMixin",
     "common.LivingEntityMixin",
     "common.LivingEntityTravelMixin",
     "common.PlayerMixin"

@@ -9,27 +9,35 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
-import net.minecraft.world.phys.shapes.VoxelShape;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
-import java.util.Optional;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 
 /**
- * Server-side block pickup. Every few ticks the ball looks for solid blocks around it and glues them to its surface.
- * This does not depend on the client collision hook / packet, so it keeps working whatever the client does.
+ * Server-side block pickup. Every tick the ball looks for solid blocks inside its whole hitbox (plus a magnet
+ * margin) and glues them to its surface. Because the whole hitbox is covered, the ball never bumps into blocks
+ * and keeps gliding. Does not depend on the client collision hook / packet.
  */
 public final class KatamariAbsorb {
-    /** Max blocks glued per scan, keeps big balls from lagging the server. */
-    private static final int MAX_PER_SCAN = 24;
-    /** Blocks are pulled in from this far outside the ball's surface (blocks) ... */
+    /** Max blocks glued per scan. */
+    private static final int MAX_PER_SCAN = 80;
+    /** Candidates collected per scan before sorting (nearest are absorbed first). */
+    private static final int MAX_CANDIDATES = 1500;
+    /** Magnet margin around the hitbox (blocks) ... */
     private static final double REACH_BASE = 1.0;
-    /** ... plus this fraction of the ball radius, so bigger balls have a bigger "magnet". */
+    /** ... plus this fraction of the ball radius. */
     private static final double REACH_PER_RADIUS = 0.3;
-    private static final int MAX_SCAN_RADIUS = 20;
+    private static final int MAX_AXIS_EXTENT = 48;
     /** Attached blocks sit on the surface: block centre this far from the ball surface. */
     private static final double SURFACE_OFFSET = 0.5;
+
+    private record Candidate(long pos, double distSq) {
+    }
 
     private KatamariAbsorb() {
     }
@@ -53,43 +61,53 @@ public final class KatamariAbsorb {
 
         Vec3 feet = player.position();
         Vec3 center = feet.add(0, radius, 0);
-        double reach = radius + REACH_BASE + REACH_PER_RADIUS * radius;
-        int range = Math.min(MAX_SCAN_RADIUS, (int) Math.ceil(reach) + 1);
+        double margin = REACH_BASE + REACH_PER_RADIUS * radius;
+        AABB zone = player.getBoundingBox().inflate(margin);
 
-        int cx = Mth.floor(center.x);
-        int cy = Mth.floor(center.y);
-        int cz = Mth.floor(center.z);
+        int minX = Mth.floor(zone.minX);
+        int maxX = Math.min(Mth.floor(zone.maxX), minX + MAX_AXIS_EXTENT);
+        int minY = Mth.floor(zone.minY);
+        int maxY = Math.min(Mth.floor(zone.maxY), minY + MAX_AXIS_EXTENT);
+        int minZ = Mth.floor(zone.minZ);
+        int maxZ = Math.min(Mth.floor(zone.maxZ), minZ + MAX_AXIS_EXTENT);
+
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-        int absorbed = 0;
+        List<Candidate> candidates = new ArrayList<>();
 
-        for (int dy = -range; dy <= range && absorbed < MAX_PER_SCAN; dy++) {
-            int y = cy + dy;
+        scan:
+        for (int y = minY; y <= maxY; y++) {
             // Blocks below the feet are the ground the ball rolls on, they are never picked up.
             if (y < feet.y - 1.0E-3) {
                 continue;
             }
-            for (int dx = -range; dx <= range && absorbed < MAX_PER_SCAN; dx++) {
-                for (int dz = -range; dz <= range && absorbed < MAX_PER_SCAN; dz++) {
-                    pos.set(cx + dx, y, cz + dz);
+            for (int x = minX; x <= maxX; x++) {
+                for (int z = minZ; z <= maxZ; z++) {
+                    pos.set(x, y, z);
                     if (!level.hasChunkAt(pos)) {
                         continue;
                     }
-                    BlockState state = level.getBlockState(pos);
-                    if (!canAbsorb(level, pos, state)) {
+                    if (!canAbsorb(level, pos, level.getBlockState(pos))) {
                         continue;
                     }
-
-                    VoxelShape shape = state.getCollisionShape(level, pos).move(pos.getX(), pos.getY(), pos.getZ());
-                    Optional<Vec3> closest = shape.closestPointTo(center);
-                    if (closest.isEmpty() || closest.get().distanceTo(center) > reach) {
-                        continue;
-                    }
-
-                    if (absorb(level, player, pos.immutable(), feet)) {
-                        absorbed++;
+                    double dx = x + 0.5 - center.x;
+                    double dy = y + 0.5 - center.y;
+                    double dz = z + 0.5 - center.z;
+                    candidates.add(new Candidate(pos.asLong(), dx * dx + dy * dy + dz * dz));
+                    if (candidates.size() >= MAX_CANDIDATES) {
+                        break scan;
                     }
                 }
             }
+        }
+
+        if (candidates.isEmpty()) {
+            return;
+        }
+        candidates.sort(Comparator.comparingDouble(Candidate::distSq));
+
+        int limit = Math.min(MAX_PER_SCAN, candidates.size());
+        for (int i = 0; i < limit; i++) {
+            absorb(level, player, BlockPos.of(candidates.get(i).pos()), feet);
         }
     }
 
