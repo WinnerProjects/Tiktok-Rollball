@@ -10,6 +10,8 @@ import com.github.tacowasa059.katamariio.common.networks.S2CPlayerPacket;
 import com.github.tacowasa059.katamariio.common.serializers.ModDataSerializers;
 import com.github.tacowasa059.katamariio.common.utils.QuaternionUtils;
 import com.mojang.serialization.Codec;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.syncher.EntityDataAccessor;
@@ -73,13 +75,13 @@ public abstract class PlayerMixin implements ICustomPlayerData {
     @Unique
     private static final float KATAMARI_BLOCK_EXTENT = 0.5f;
     @Unique
-    private static final float KATAMARI_DP_CUTOFF_OFFSET = 3.0f;
+    private static final float KATAMARI_DP_CUTOFF_OFFSET = 1.0f;
     /** Upper bound of attached blocks kept/synced; the innermost ones are dropped first. */
     @Unique
-    private static final int KATAMARI_MAX_ATTACHED_BLOCKS = 2500;
-    /** Volume every absorbed block adds to the ball (1.0 = a full block). Lower = slower growth. */
+    private static final int KATAMARI_MAX_ATTACHED_BLOCKS = 3200;
+    /** Volume every eaten block adds to the ball (1.0 = a full block). Lower = slower growth. */
     @Unique
-    private static final float KATAMARI_GROWTH_VOLUME_PER_BLOCK = 0.15f;
+    private static final float KATAMARI_GROWTH_VOLUME_PER_BLOCK = 0.05f;
     @Unique
     private static final float KATAMARI_MAX_SIZE = 20.0f;
     @Unique
@@ -375,20 +377,133 @@ public abstract class PlayerMixin implements ICustomPlayerData {
 
     @Override
     public void katamariIO$addBlock(Block block, Quaternionf quaternionf, Vec3 vec3) {
+        katamariIO$absorbBlocks(List.of(block), List.of(vec3));
+    }
+
+    /**
+     * Batch absorb: grows the ball once, then glues every block into a free cell of the spherical block shell
+     * (integer lattice in the ball's local frame) nearest to where it was hit. The shell therefore never has
+     * overlapping or missing blocks, and the data is synced to clients once per batch instead of once per block.
+     */
+    @Override
+    public void katamariIO$absorbBlocks(List<Block> absorbed, List<Vec3> localHits) {
+        int count = Math.min(absorbed.size(), localHits.size());
+        if (count <= 0) {
+            return;
+        }
         Player entity = (Player) (Object) this;
-        List<Block> blocks = entity.getEntityData().get(SPHERICAL_PLAYER_BLOCK_LIST);
-        List<Quaternionf> quaternionfs = entity.getEntityData().get(SPHERICAL_PLAYER_QUATERNION_LIST);
-        List<Vec3> vec3s = entity.getEntityData().get(SPHERICAL_PLAYER_POSITION_LIST);
-        blocks.add(block);
-        quaternionfs.add(quaternionf);
-        vec3s.add(vec3);
-        entity.getEntityData().set(SPHERICAL_PLAYER_BLOCK_LIST, blocks, true);
-        entity.getEntityData().set(SPHERICAL_PLAYER_POSITION_LIST, vec3s, true);
-        entity.getEntityData().set(SPHERICAL_PLAYER_QUATERNION_LIST, quaternionfs, true);
-        int currentCount = entity.getEntityData().get(SPHERICAL_PLAYER_BLOCK_COUNT);
-        entity.getEntityData().set(SPHERICAL_PLAYER_BLOCK_COUNT, currentCount + 1);
-        katamariIO$applyBlockRadiusIncremental(entity, vec3);
-        katamariIO$pruneDataParameterByRadius(entity);
+        SynchedEntityData data = entity.getEntityData();
+
+        boolean sizeChanged = katamariIO$growBy(entity, count);
+        double shellRadius = katamariIO$exactSize / 2.0;
+
+        List<Block> blocks = data.get(SPHERICAL_PLAYER_BLOCK_LIST);
+        List<Quaternionf> quaternions = data.get(SPHERICAL_PLAYER_QUATERNION_LIST);
+        List<Vec3> positions = data.get(SPHERICAL_PLAYER_POSITION_LIST);
+        int existing = Math.min(blocks.size(), Math.min(quaternions.size(), positions.size()));
+        katamariIO$truncate(blocks, existing);
+        katamariIO$truncate(quaternions, existing);
+        katamariIO$truncate(positions, existing);
+
+        LongOpenHashSet occupied = new LongOpenHashSet(existing * 2 + 16);
+        for (int i = 0; i < existing; i++) {
+            Vec3 p = positions.get(i);
+            occupied.add(BlockPos.asLong((int) Math.round(p.x), (int) Math.round(p.y), (int) Math.round(p.z)));
+        }
+
+        // Free cells of the outer shell: cell centres with  R - 0.5 < distance <= R + 0.5.
+        double inner = Math.max(0.0, shellRadius - 0.5);
+        double outer = shellRadius + 0.5;
+        double innerSq = inner * inner;
+        double outerSq = outer * outer;
+        int extent = (int) Math.ceil(outer);
+        int[] fx = new int[256];
+        int[] fy = new int[256];
+        int[] fz = new int[256];
+        int free = 0;
+        for (int x = -extent; x <= extent; x++) {
+            for (int y = -extent; y <= extent; y++) {
+                for (int z = -extent; z <= extent; z++) {
+                    double d2 = (double) x * x + (double) y * y + (double) z * z;
+                    if (d2 <= innerSq || d2 > outerSq) {
+                        continue;
+                    }
+                    if (occupied.contains(BlockPos.asLong(x, y, z))) {
+                        continue;
+                    }
+                    if (free == fx.length) {
+                        fx = java.util.Arrays.copyOf(fx, free * 2);
+                        fy = java.util.Arrays.copyOf(fy, free * 2);
+                        fz = java.util.Arrays.copyOf(fz, free * 2);
+                    }
+                    fx[free] = x;
+                    fy[free] = y;
+                    fz[free] = z;
+                    free++;
+                }
+            }
+        }
+
+        int placed = 0;
+        for (int i = 0; i < count && free > 0; i++) {
+            Vec3 hit = localHits.get(i);
+            double len = hit.length();
+            double tx;
+            double ty;
+            double tz;
+            if (len < 1.0E-4) {
+                tx = 0.0;
+                ty = shellRadius;
+                tz = 0.0;
+            } else {
+                double scale = shellRadius / len;
+                tx = hit.x * scale;
+                ty = hit.y * scale;
+                tz = hit.z * scale;
+            }
+
+            int best = 0;
+            double bestDist = Double.MAX_VALUE;
+            for (int c = 0; c < free; c++) {
+                double dx = fx[c] - tx;
+                double dy = fy[c] - ty;
+                double dz = fz[c] - tz;
+                double d = dx * dx + dy * dy + dz * dz;
+                if (d < bestDist) {
+                    bestDist = d;
+                    best = c;
+                }
+            }
+
+            blocks.add(absorbed.get(i));
+            positions.add(new Vec3(fx[best], fy[best], fz[best]));
+            quaternions.add(new Quaternionf());
+            placed++;
+
+            free--;
+            fx[best] = fx[free];
+            fy[best] = fy[free];
+            fz[best] = fz[free];
+        }
+
+        // Nothing new to show (shell already full): do not touch the synced lists, so nothing is re-sent.
+        if (placed > 0) {
+            data.set(SPHERICAL_PLAYER_BLOCK_LIST, blocks, true);
+            data.set(SPHERICAL_PLAYER_POSITION_LIST, positions, true);
+            data.set(SPHERICAL_PLAYER_QUATERNION_LIST, quaternions, true);
+            data.set(SPHERICAL_PLAYER_BLOCK_COUNT, data.get(SPHERICAL_PLAYER_BLOCK_COUNT) + placed);
+            katamariIO$binRadiiDirty = true;
+        }
+        if (placed > 0 || sizeChanged) {
+            katamariIO$pruneDataParameterByRadius(entity);
+        }
+    }
+
+    @Unique
+    private static void katamariIO$truncate(List<?> list, int size) {
+        while (list.size() > size) {
+            list.remove(list.size() - 1);
+        }
     }
 
     @Override
@@ -422,32 +537,35 @@ public abstract class PlayerMixin implements ICustomPlayerData {
     }
 
     /**
-     * Volume based growth: every absorbed block adds a little volume to the ball. The exact size is kept in a
-     * float so tiny increments are not lost, the synced size moves in 0.1 steps.
+     * Volume based growth: every eaten block adds a little volume to the ball. The exact size is kept in a
+     * float so tiny increments are not lost, the synced size moves in 0.1 steps. The visible (render) size is
+     * kept equal to the hitbox size so the drawn core never lags behind the block shell.
+     *
+     * @return true if the synced size changed
      */
     @Unique
-    private void katamariIO$applyBlockRadiusIncremental(Player entity, Vec3 vec3) {
+    private boolean katamariIO$growBy(Player entity, int blockCount) {
         float current = entity.getEntityData().get(sphericalPlayerMod$SIZE);
         if (katamariIO$exactSize <= 0.0f || Math.abs(Math.round(katamariIO$exactSize * 10.0f) / 10.0f - current) > 0.051f) {
             katamariIO$exactSize = current;
         }
         if (katamariIO$exactSize >= KATAMARI_MAX_SIZE - 1.0E-3f) {
-            return;
+            return false;
         }
 
         double radius = katamariIO$exactSize / 2.0;
-        double addedRadiusCube = KATAMARI_GROWTH_VOLUME_PER_BLOCK * 3.0 / (4.0 * Math.PI);
+        double addedRadiusCube = KATAMARI_GROWTH_VOLUME_PER_BLOCK * blockCount * 3.0 / (4.0 * Math.PI);
         double newRadius = Math.cbrt(radius * radius * radius + addedRadiusCube);
         katamariIO$exactSize = (float) Math.min(KATAMARI_MAX_SIZE, newRadius * 2.0);
 
         float newSize = Math.round(katamariIO$exactSize * 10.0f) / 10.0f;
         if (Math.abs(newSize - current) > 1.0E-4f) {
             entity.getEntityData().set(sphericalPlayerMod$SIZE, newSize);
-            // Keep the visible sphere in sync with the growing hitbox, otherwise the blocks stick to a
-            // bigger shell than the sphere that is drawn and the ball looks unfinished.
             entity.getEntityData().set(sphericalPlayerMod$RENDER_SIZE, newSize);
             entity.refreshDimensions();
+            return true;
         }
+        return false;
     }
 
     @Unique

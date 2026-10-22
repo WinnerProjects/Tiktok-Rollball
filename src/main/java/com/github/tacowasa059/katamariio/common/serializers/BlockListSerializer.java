@@ -4,7 +4,6 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.syncher.EntityDataSerializer;
-import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.block.Block;
 
 import java.util.ArrayList;
@@ -15,15 +14,15 @@ public class BlockListSerializer implements EntityDataSerializer<List<Block>> {
             (buf, blocks) -> {
                 buf.writeVarInt(blocks.size());
                 for (Block block : blocks) {
-                    Identifier id = BuiltInRegistries.BLOCK.getKey(block);
-                    buf.writeIdentifier(id);
+                    // Raw registry id (1-2 bytes) instead of the full "minecraft:stone" identifier string.
+                    buf.writeVarInt(BuiltInRegistries.BLOCK.getId(block));
                 }
             },
             buf -> {
                 int size = buf.readVarInt();
                 List<Block> blocks = new ArrayList<>(size);
                 for (int i = 0; i < size; i++) {
-                    blocks.add(BuiltInRegistries.BLOCK.getValue(buf.readIdentifier()));
+                    blocks.add(BuiltInRegistries.BLOCK.byId(buf.readVarInt()));
                 }
                 return blocks;
             });

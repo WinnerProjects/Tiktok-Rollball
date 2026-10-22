@@ -1,7 +1,6 @@
 package com.github.tacowasa059.katamariio.common.networks;
 
 import com.github.tacowasa059.katamariio.KatamariIO;
-import com.github.tacowasa059.katamariio.common.KatamariAbsorb;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
@@ -35,10 +34,11 @@ public record RemoveBlockPacket(BlockPos pos, Vec3 playerPos) implements CustomP
         return TYPE;
     }
 
+    /**
+     * Kept only so old clients/servers stay protocol compatible. Absorbing is done entirely by the server scan
+     * (KatamariAbsorb#tick); trusting a client supplied block position/player position was both redundant and
+     * a source of duplicate packets and double growth.
+     */
     public void handle(ServerPlayer serverPlayer) {
-        if (serverPlayer == null) {
-            return;
-        }
-        KatamariAbsorb.absorb(serverPlayer.level(), serverPlayer, pos, playerPos);
     }
 }

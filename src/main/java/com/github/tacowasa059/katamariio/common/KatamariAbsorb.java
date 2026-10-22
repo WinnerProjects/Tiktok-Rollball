@@ -15,29 +15,31 @@ import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
 import java.util.ArrayList;
-import java.util.Comparator;
+import java.util.Arrays;
 import java.util.List;
 
 /**
- * Server-side block pickup. Every tick the ball looks for solid blocks inside its whole hitbox (plus a magnet
- * margin) and glues them to its surface. Because the whole hitbox is covered, the ball never bumps into blocks
- * and keeps gliding. Does not depend on the client collision hook / packet.
+ * Server-side block pickup. The ball periodically looks for solid blocks inside a sphere around its centre
+ * (ball radius + a magnet margin), removes them from the world and hands them to the player data in ONE batch.
+ * The player data decides where every block sits on the ball (see ICustomPlayerData#katamariIO$absorbBlocks).
+ *
+ * Optimisations compared to the first version:
+ * - only the sphere is scanned (not the whole bounding cube), columns outside the sphere are skipped early;
+ * - the scan interval grows with the ball size (1 / 2 / 4 ticks);
+ * - candidates are sorted as primitive longs, no per-candidate objects;
+ * - the inverse ball rotation is computed once per scan, not once per block;
+ * - one batch call per scan means one list rebuild and one network sync instead of one per block.
  */
 public final class KatamariAbsorb {
-    /** Max blocks glued per scan. */
-    private static final int MAX_PER_SCAN = 80;
-    /** Candidates collected per scan before sorting (nearest are absorbed first). */
-    private static final int MAX_CANDIDATES = 1500;
-    /** Magnet margin around the hitbox (blocks) ... */
+    /** Blocks eaten per tick on average; a scan every N ticks may eat N times this many. */
+    private static final int MAX_PER_TICK = 60;
+    private static final int MAX_PER_SCAN_CAP = 240;
+    /** Hard safety cap for candidates collected in one scan. */
+    private static final int MAX_CANDIDATES = 8000;
+    /** Magnet margin around the ball (blocks) ... */
     private static final double REACH_BASE = 1.0;
     /** ... plus this fraction of the ball radius. */
     private static final double REACH_PER_RADIUS = 0.3;
-    private static final int MAX_AXIS_EXTENT = 48;
-    /** Attached blocks sit on the surface: block centre this far from the ball surface. */
-    private static final double SURFACE_OFFSET = 0.5;
-
-    private record Candidate(long pos, double distSq) {
-    }
 
     private KatamariAbsorb() {
     }
@@ -53,61 +55,111 @@ public final class KatamariAbsorb {
         }
 
         float radius = data.katamariIO$getSize() / 2.0f;
-        // Small balls scan every tick, big balls (expensive scan) every second tick.
-        int interval = radius < 5.0f ? 1 : 2;
+        // Small balls scan every tick, big balls (expensive scan) less often.
+        int interval = radius < 3.0f ? 1 : (radius < 6.0f ? 2 : 4);
         if (player.tickCount % interval != 0) {
             return;
         }
+        int perScan = Math.min(MAX_PER_SCAN_CAP, MAX_PER_TICK * interval);
 
         Vec3 feet = player.position();
         Vec3 center = feet.add(0, radius, 0);
         double margin = REACH_BASE + REACH_PER_RADIUS * radius;
+        double reach = radius + margin;
+        double reachSq = reach * reach;
         AABB zone = player.getBoundingBox().inflate(margin);
 
         int minX = Mth.floor(zone.minX);
-        int maxX = Math.min(Mth.floor(zone.maxX), minX + MAX_AXIS_EXTENT);
-        int minY = Mth.floor(zone.minY);
-        int maxY = Math.min(Mth.floor(zone.maxY), minY + MAX_AXIS_EXTENT);
+        int maxX = Mth.floor(zone.maxX);
         int minZ = Mth.floor(zone.minZ);
-        int maxZ = Math.min(Mth.floor(zone.maxZ), minZ + MAX_AXIS_EXTENT);
+        int maxZ = Mth.floor(zone.maxZ);
+        // Blocks below the feet are the ground the ball rolls on, they are never picked up.
+        int minY = Math.max(Mth.floor(zone.minY), (int) Math.ceil(feet.y - 1.0E-3));
+        int maxY = Mth.floor(zone.maxY);
 
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-        List<Candidate> candidates = new ArrayList<>();
+        long[] packed = new long[256];
+        long[] sortKeys = new long[256];
+        int found = 0;
 
         scan:
-        for (int y = minY; y <= maxY; y++) {
-            // Blocks below the feet are the ground the ball rolls on, they are never picked up.
-            if (y < feet.y - 1.0E-3) {
+        for (int x = minX; x <= maxX; x++) {
+            double dx = x + 0.5 - center.x;
+            double dxSq = dx * dx;
+            if (dxSq > reachSq) {
                 continue;
             }
-            for (int x = minX; x <= maxX; x++) {
-                for (int z = minZ; z <= maxZ; z++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                double dz = z + 0.5 - center.z;
+                double dxzSq = dxSq + dz * dz;
+                if (dxzSq > reachSq) {
+                    continue;
+                }
+                double dyMax = Math.sqrt(reachSq - dxzSq);
+                int yLo = Math.max(minY, Mth.ceil(center.y - dyMax - 0.5));
+                int yHi = Math.min(maxY, Mth.floor(center.y + dyMax - 0.5));
+                if (yLo > yHi) {
+                    continue;
+                }
+                pos.set(x, yLo, z);
+                if (!level.hasChunkAt(pos)) {
+                    continue;
+                }
+                for (int y = yLo; y <= yHi; y++) {
                     pos.set(x, y, z);
-                    if (!level.hasChunkAt(pos)) {
-                        continue;
-                    }
                     if (!canAbsorb(level, pos, level.getBlockState(pos))) {
                         continue;
                     }
-                    double dx = x + 0.5 - center.x;
                     double dy = y + 0.5 - center.y;
-                    double dz = z + 0.5 - center.z;
-                    candidates.add(new Candidate(pos.asLong(), dx * dx + dy * dy + dz * dz));
-                    if (candidates.size() >= MAX_CANDIDATES) {
+                    double distSq = dxzSq + dy * dy;
+                    if (distSq > reachSq) {
+                        continue;
+                    }
+                    if (found == packed.length) {
+                        packed = Arrays.copyOf(packed, found * 2);
+                        sortKeys = Arrays.copyOf(sortKeys, found * 2);
+                    }
+                    packed[found] = pos.asLong();
+                    // Positive floats order like their raw int bits: nearest block first.
+                    sortKeys[found] = ((long) Float.floatToIntBits((float) distSq) << 32) | found;
+                    found++;
+                    if (found >= MAX_CANDIDATES) {
                         break scan;
                     }
                 }
             }
         }
 
-        if (candidates.isEmpty()) {
+        if (found == 0) {
             return;
         }
-        candidates.sort(Comparator.comparingDouble(Candidate::distSq));
+        Arrays.sort(sortKeys, 0, found);
 
-        int limit = Math.min(MAX_PER_SCAN, candidates.size());
+        Quaternionf inverseBallRotation = new Quaternionf(data.katamariIO$getQuaternion()).invert();
+        int limit = Math.min(perScan, found);
+        List<Block> eaten = new ArrayList<>(limit);
+        List<Vec3> hits = new ArrayList<>(limit);
+        Vector3f local = new Vector3f();
+
         for (int i = 0; i < limit; i++) {
-            absorb(level, player, BlockPos.of(candidates.get(i).pos()), feet);
+            int index = (int) (sortKeys[i] & 0xFFFFFFFFL);
+            BlockPos blockPos = BlockPos.of(packed[index]);
+            BlockState state = level.getBlockState(blockPos);
+            if (!canAbsorb(level, blockPos, state)) {
+                continue;
+            }
+            Block block = state.getBlock();
+            level.setBlockAndUpdate(blockPos, Blocks.AIR.defaultBlockState());
+
+            Vec3 relativeWorld = Vec3.atCenterOf(blockPos).subtract(center);
+            local.set((float) relativeWorld.x, (float) relativeWorld.y, (float) relativeWorld.z);
+            local.rotate(inverseBallRotation);
+            eaten.add(block);
+            hits.add(new Vec3(local.x, local.y, local.z));
+        }
+
+        if (!eaten.isEmpty()) {
+            data.katamariIO$absorbBlocks(eaten, hits);
         }
     }
 
@@ -119,39 +171,5 @@ public final class KatamariAbsorb {
             return false;
         }
         return !state.getCollisionShape(level, pos).isEmpty();
-    }
-
-    /** Removes the block from the world and attaches it to the ball. */
-    public static boolean absorb(Level level, Player player, BlockPos pos, Vec3 feetPos) {
-        ICustomPlayerData data = (ICustomPlayerData) player;
-        if (!data.katamariIO$getFlag()) {
-            return false;
-        }
-
-        BlockState state = level.getBlockState(pos);
-        if (state.isAir()) {
-            return false;
-        }
-        Block block = state.getBlock();
-
-        level.setBlockAndUpdate(pos, Blocks.AIR.defaultBlockState());
-        level.removeBlockEntity(pos);
-
-        float radius = data.katamariIO$getSize() / 2.0f;
-        Vec3 center = feetPos.add(0, radius, 0);
-        Vec3 relativeWorld = Vec3.atCenterOf(pos).subtract(center);
-        Quaternionf inverseBallRotation = new Quaternionf(data.katamariIO$getQuaternion()).invert();
-        Vector3f local = new Vector3f((float) relativeWorld.x, (float) relativeWorld.y, (float) relativeWorld.z);
-        local.rotate(inverseBallRotation);
-
-        // Blocks that are pulled in from a distance snap onto the ball's surface instead of floating around it.
-        double maxDistance = radius + SURFACE_OFFSET;
-        float distance = local.length();
-        if (distance > maxDistance && distance > 1.0E-4f) {
-            local.mul((float) (maxDistance / distance));
-        }
-
-        data.katamariIO$addBlock(block, inverseBallRotation, new Vec3(local.x, local.y, local.z));
-        return true;
     }
 }

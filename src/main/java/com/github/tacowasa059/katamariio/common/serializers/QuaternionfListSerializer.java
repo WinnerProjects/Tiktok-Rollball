@@ -13,17 +13,27 @@ public class QuaternionfListSerializer implements EntityDataSerializer<List<Quat
             (buf, list) -> {
                 buf.writeVarInt(list.size());
                 for (Quaternionf q : list) {
-                    buf.writeFloat(q.x());
-                    buf.writeFloat(q.y());
-                    buf.writeFloat(q.z());
-                    buf.writeFloat(q.w());
+                    // Shell blocks are never rotated: 1 byte for the identity, full quaternion only for old data.
+                    if (q.x() == 0.0f && q.y() == 0.0f && q.z() == 0.0f && q.w() == 1.0f) {
+                        buf.writeByte(0);
+                    } else {
+                        buf.writeByte(1);
+                        buf.writeFloat(q.x());
+                        buf.writeFloat(q.y());
+                        buf.writeFloat(q.z());
+                        buf.writeFloat(q.w());
+                    }
                 }
             },
             buf -> {
                 int size = buf.readVarInt();
                 List<Quaternionf> list = new ArrayList<>(size);
                 for (int i = 0; i < size; i++) {
-                    list.add(new Quaternionf(buf.readFloat(), buf.readFloat(), buf.readFloat(), buf.readFloat()));
+                    if (buf.readByte() == 0) {
+                        list.add(new Quaternionf());
+                    } else {
+                        list.add(new Quaternionf(buf.readFloat(), buf.readFloat(), buf.readFloat(), buf.readFloat()));
+                    }
                 }
                 return list;
             });

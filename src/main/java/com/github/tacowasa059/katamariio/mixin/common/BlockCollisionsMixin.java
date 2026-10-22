@@ -1,6 +1,5 @@
 package com.github.tacowasa059.katamariio.mixin.common;
 
-import com.github.tacowasa059.katamariio.client.NeighboringBlockUtils;
 import com.github.tacowasa059.katamariio.common.accessors.ICustomPlayerData;
 import com.google.common.collect.AbstractIterator;
 import net.minecraft.core.BlockPos;
@@ -167,19 +166,13 @@ public abstract class BlockCollisionsMixin<T> extends AbstractIterator<T> {
         }
     }
 
+    /**
+     * Only blocks below the feet (the ground) really collide; everything else is ignored here and eaten by the
+     * server scan. No packet is sent to the server any more.
+     */
     @Unique
     private boolean katamariIO$handleCollision(Player player, AABB aabb, VoxelShape shape, int x, int y, int z) {
-        float radius = player.getDimensions(Pose.STANDING).height() / 2.0f;
-        Vec3 center = player.position().add(0, radius, 0);
-        Optional<Vec3> closest = shape.closestPointTo(center);
-
-        if (aabb.minY < player.position().y) {
-            return true;
-        }
-        if (closest.isPresent() && closest.get().distanceTo(center) <= radius && player.level().isClientSide()) {
-            NeighboringBlockUtils.processNeighboring(player, new BlockPos(x, y, z));
-        }
-        return false;
+        return aabb.minY < player.position().y;
     }
 
     public T computeNext() {

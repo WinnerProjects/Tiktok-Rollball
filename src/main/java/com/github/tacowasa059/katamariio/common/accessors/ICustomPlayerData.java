@@ -29,6 +29,7 @@ public interface ICustomPlayerData {
     Vec3 katamariIO$getCurrentPosition();
 
     void katamariIO$addBlock(Block block, Quaternionf quaternionf, Vec3 vec3);
+    void katamariIO$absorbBlocks(List<Block> blocks, List<Vec3> localHits);
     int katamariIO$getAttachedBlockCount();
     void katamariIO$clearAttachedBlocks();
 

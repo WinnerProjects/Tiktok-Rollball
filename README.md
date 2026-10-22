@@ -52,3 +52,12 @@ Kod 1.20.1 API'sinden **Minecraft 1.21.11 (Fabric)** API'sine taşındı:
 - istemci: `KeyboardInput.keyPresses` (`Input` record), `Camera#getMaxZoom(float)`
 
 Bu port derleme ortamı olmadan yazıldı; ilk `./gradlew build` çıktısındaki hatalara göre küçük düzeltmeler gerekebilir.
+
+## Büyüme ve blok kabuğu (v1.0.3)
+
+- Büyüme hızı `PlayerMixin.KATAMARI_GROWTH_VOLUME_PER_BLOCK` ile ayarlanır (şu an `0.05`; küçültürsen daha yavaş büyür).
+- Yenen bloklar rastgele yapışmaz; topun yerel eksen ağında (tam sayı hücreler) dış kabuktaki en yakın boş hücreye
+  yerleşir. Böylece kabuk üst üste binmeden, boşluksuz ve tam yuvarlak oluşur. Görünen çekirdek küre her zaman
+  hitbox boyutunu takip eder.
+- Optimizasyon: sadece küre taranır, tarama aralığı boyuta göre 1/2/4 tick, bloklar tek seferde (batch) eklenir ve
+  istemciye tek seferde senkronlanır, ağ verisi ~7 kat küçüldü, istemci `RemoveBlockPacket` göndermez.
