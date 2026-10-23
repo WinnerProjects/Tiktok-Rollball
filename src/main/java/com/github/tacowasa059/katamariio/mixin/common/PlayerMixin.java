@@ -3,6 +3,7 @@ package com.github.tacowasa059.katamariio.mixin.common;
 import com.github.tacowasa059.katamariio.KatamariIO;
 import com.github.tacowasa059.katamariio.common.KatamariAbsorb;
 import com.github.tacowasa059.katamariio.common.KatamariMovement;
+import com.github.tacowasa059.katamariio.common.KatamariShell;
 import com.github.tacowasa059.katamariio.common.KatamariWin;
 import net.minecraft.server.level.ServerPlayer;
 import com.github.tacowasa059.katamariio.common.accessors.ICustomPlayerData;
@@ -10,8 +11,6 @@ import com.github.tacowasa059.katamariio.common.networks.S2CPlayerPacket;
 import com.github.tacowasa059.katamariio.common.serializers.ModDataSerializers;
 import com.github.tacowasa059.katamariio.common.utils.QuaternionUtils;
 import com.mojang.serialization.Codec;
-import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
-import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.syncher.EntityDataAccessor;
@@ -74,14 +73,9 @@ public abstract class PlayerMixin implements ICustomPlayerData {
     private static final int KATAMARI_COLLISION_LON_BINS = 12;
     @Unique
     private static final float KATAMARI_BLOCK_EXTENT = 0.5f;
-    @Unique
-    private static final float KATAMARI_DP_CUTOFF_OFFSET = 1.0f;
-    /** Upper bound of attached blocks kept/synced; the innermost ones are dropped first. */
-    @Unique
-    private static final int KATAMARI_MAX_ATTACHED_BLOCKS = 3200;
     /** Volume every eaten block adds to the ball (1.0 = a full block). Lower = slower growth. */
     @Unique
-    private static final float KATAMARI_GROWTH_VOLUME_PER_BLOCK = 0.05f;
+    private static final float KATAMARI_GROWTH_VOLUME_PER_BLOCK = 0.012f;
     @Unique
     private static final float KATAMARI_MAX_SIZE = 20.0f;
     @Unique
@@ -92,6 +86,11 @@ public abstract class PlayerMixin implements ICustomPlayerData {
     private float[] katamariIO$binMaxRadii = null;
     @Unique
     private boolean katamariIO$binRadiiDirty = true;
+    /** Server-side master copy of the block shell (one block per slot); synced to clients in throttled batches. */
+    @Unique
+    private List<Block> katamariIO$shell = null;
+    @Unique
+    private boolean katamariIO$shellDirty = false;
 
     @Inject(method = "tick", at = @At("HEAD"))
     protected void tick(CallbackInfo ci) {
@@ -118,6 +117,7 @@ public abstract class PlayerMixin implements ICustomPlayerData {
             }
         } else {
             KatamariAbsorb.tick(player);
+            katamariIO$serverShellTick(player);
             if (player instanceof ServerPlayer serverPlayer) {
                 KatamariWin.tick(serverPlayer);
             }
@@ -166,29 +166,15 @@ public abstract class PlayerMixin implements ICustomPlayerData {
         output.store("SPM_POSITION", CompoundTag.CODEC, dataManager.get(CURRENT_POSITION));
         output.store("SPM_BlockCount", Codec.INT, dataManager.get(SPHERICAL_PLAYER_BLOCK_COUNT));
 
-        List<Block> blocks = dataManager.get(SPHERICAL_PLAYER_BLOCK_LIST);
-        List<Vec3> positions = dataManager.get(SPHERICAL_PLAYER_POSITION_LIST);
-        List<Quaternionf> quaternions = dataManager.get(SPHERICAL_PLAYER_QUATERNION_LIST);
-        int size = Math.min(blocks.size(), Math.min(positions.size(), quaternions.size()));
+        List<Block> blocks = katamariIO$shell != null ? katamariIO$shell : dataManager.get(SPHERICAL_PLAYER_BLOCK_LIST);
         ValueOutput.ValueOutputList attachedList = output.childrenList(SPM_ATTACHED_BLOCKS);
-        for (int i = 0; i < size; i++) {
-            Block block = blocks.get(i);
-            Vec3 pos = positions.get(i);
-            Quaternionf quat = quaternions.get(i);
+        for (Block block : blocks) {
             Identifier key = BuiltInRegistries.BLOCK.getKey(block);
             if (key == null) {
                 continue;
             }
-
             ValueOutput entry = attachedList.addChild();
             entry.store("block", Codec.STRING, key.toString());
-            entry.store("x", Codec.DOUBLE, pos.x);
-            entry.store("y", Codec.DOUBLE, pos.y);
-            entry.store("z", Codec.DOUBLE, pos.z);
-            entry.store("qx", Codec.FLOAT, quat.x);
-            entry.store("qy", Codec.FLOAT, quat.y);
-            entry.store("qz", Codec.FLOAT, quat.z);
-            entry.store("qw", Codec.FLOAT, quat.w);
         }
     }
 
@@ -219,33 +205,18 @@ public abstract class PlayerMixin implements ICustomPlayerData {
 
         Optional<ValueInput.ValueInputList> attachedOpt = input.childrenList(SPM_ATTACHED_BLOCKS);
         if (attachedOpt.isPresent()) {
+            // Only the block types are stored; their place on the ball follows from the slot index and the size.
             List<Block> blocks = new ArrayList<>();
-            List<Vec3> positions = new ArrayList<>();
-            List<Quaternionf> quaternions = new ArrayList<>();
-
             for (ValueInput entry : attachedOpt.get()) {
                 Identifier key = Identifier.tryParse(entry.read("block", Codec.STRING).orElse(""));
                 if (key == null || !BuiltInRegistries.BLOCK.containsKey(key)) {
                     continue;
                 }
-                Block block = BuiltInRegistries.BLOCK.getValue(key);
-                blocks.add(block);
-                positions.add(new Vec3(
-                        entry.read("x", Codec.DOUBLE).orElse(0.0),
-                        entry.read("y", Codec.DOUBLE).orElse(0.0),
-                        entry.read("z", Codec.DOUBLE).orElse(0.0)));
-                quaternions.add(new Quaternionf(
-                        entry.read("qx", Codec.FLOAT).orElse(0f),
-                        entry.read("qy", Codec.FLOAT).orElse(0f),
-                        entry.read("qz", Codec.FLOAT).orElse(0f),
-                        entry.read("qw", Codec.FLOAT).orElse(1f)));
+                blocks.add(BuiltInRegistries.BLOCK.getValue(key));
             }
-
             dataManager.set(SPHERICAL_PLAYER_BLOCK_LIST, blocks, true);
-            dataManager.set(SPHERICAL_PLAYER_POSITION_LIST, positions, true);
-            dataManager.set(SPHERICAL_PLAYER_QUATERNION_LIST, quaternions, true);
-            dataManager.set(SPHERICAL_PLAYER_BLOCK_COUNT, blocks.size());
-            katamariIO$binRadiiDirty = true;
+            katamariIO$shell = null;
+            katamariIO$shellDirty = false;
         }
     }
 
@@ -381,9 +352,10 @@ public abstract class PlayerMixin implements ICustomPlayerData {
     }
 
     /**
-     * Batch absorb: grows the ball once, then glues every block into a free cell of the spherical block shell
-     * (integer lattice in the ball's local frame) nearest to where it was hit. The shell therefore never has
-     * overlapping or missing blocks, and the data is synced to clients once per batch instead of once per block.
+     * Batch absorb: grows the ball once, then every eaten block replaces the shell slot that lies closest to the
+     * direction it was hit from. The shell is always ONE complete layer of blocks on an evenly spaced sphere
+     * (see KatamariShell), so the ball is perfectly round and never has holes. The block list is synced to
+     * clients in throttled batches (see katamariIO$serverShellTick) instead of on every scan.
      */
     @Override
     public void katamariIO$absorbBlocks(List<Block> absorbed, List<Vec3> localHits) {
@@ -394,115 +366,111 @@ public abstract class PlayerMixin implements ICustomPlayerData {
         Player entity = (Player) (Object) this;
         SynchedEntityData data = entity.getEntityData();
 
-        boolean sizeChanged = katamariIO$growBy(entity, count);
-        double shellRadius = katamariIO$exactSize / 2.0;
+        katamariIO$growBy(entity, count);
+        data.set(SPHERICAL_PLAYER_BLOCK_COUNT, data.get(SPHERICAL_PLAYER_BLOCK_COUNT) + count);
 
-        List<Block> blocks = data.get(SPHERICAL_PLAYER_BLOCK_LIST);
-        List<Quaternionf> quaternions = data.get(SPHERICAL_PLAYER_QUATERNION_LIST);
-        List<Vec3> positions = data.get(SPHERICAL_PLAYER_POSITION_LIST);
-        int existing = Math.min(blocks.size(), Math.min(quaternions.size(), positions.size()));
-        katamariIO$truncate(blocks, existing);
-        katamariIO$truncate(quaternions, existing);
-        katamariIO$truncate(positions, existing);
-
-        LongOpenHashSet occupied = new LongOpenHashSet(existing * 2 + 16);
-        for (int i = 0; i < existing; i++) {
-            Vec3 p = positions.get(i);
-            occupied.add(BlockPos.asLong((int) Math.round(p.x), (int) Math.round(p.y), (int) Math.round(p.z)));
+        int slots = KatamariShell.slotCount(data.get(sphericalPlayerMod$SIZE));
+        List<Block> shell = katamariIO$getShell(data);
+        if (shell.size() != slots) {
+            shell = katamariIO$resampleShell(shell, slots, absorbed);
+            katamariIO$shell = shell;
         }
 
-        // Free cells of the outer shell: cell centres with  R - 0.5 < distance <= R + 0.5.
-        double inner = Math.max(0.0, shellRadius - 0.5);
-        double outer = shellRadius + 0.5;
-        double innerSq = inner * inner;
-        double outerSq = outer * outer;
-        int extent = (int) Math.ceil(outer);
-        int[] fx = new int[256];
-        int[] fy = new int[256];
-        int[] fz = new int[256];
-        int free = 0;
-        for (int x = -extent; x <= extent; x++) {
-            for (int y = -extent; y <= extent; y++) {
-                for (int z = -extent; z <= extent; z++) {
-                    double d2 = (double) x * x + (double) y * y + (double) z * z;
-                    if (d2 <= innerSq || d2 > outerSq) {
-                        continue;
-                    }
-                    if (occupied.contains(BlockPos.asLong(x, y, z))) {
-                        continue;
-                    }
-                    if (free == fx.length) {
-                        fx = java.util.Arrays.copyOf(fx, free * 2);
-                        fy = java.util.Arrays.copyOf(fy, free * 2);
-                        fz = java.util.Arrays.copyOf(fz, free * 2);
-                    }
-                    fx[free] = x;
-                    fy[free] = y;
-                    fz[free] = z;
-                    free++;
-                }
-            }
-        }
-
-        int placed = 0;
-        for (int i = 0; i < count && free > 0; i++) {
+        float[] dirs = KatamariShell.directions(slots);
+        boolean[] taken = new boolean[slots];
+        int takenCount = 0;
+        for (int i = 0; i < count; i++) {
             Vec3 hit = localHits.get(i);
             double len = hit.length();
-            double tx;
-            double ty;
-            double tz;
-            if (len < 1.0E-4) {
-                tx = 0.0;
-                ty = shellRadius;
-                tz = 0.0;
-            } else {
-                double scale = shellRadius / len;
-                tx = hit.x * scale;
-                ty = hit.y * scale;
-                tz = hit.z * scale;
+            float hx = 0.0f;
+            float hy = 1.0f;
+            float hz = 0.0f;
+            if (len > 1.0E-4) {
+                hx = (float) (hit.x / len);
+                hy = (float) (hit.y / len);
+                hz = (float) (hit.z / len);
             }
-
+            if (takenCount >= slots) {
+                java.util.Arrays.fill(taken, false);
+                takenCount = 0;
+            }
             int best = 0;
-            double bestDist = Double.MAX_VALUE;
-            for (int c = 0; c < free; c++) {
-                double dx = fx[c] - tx;
-                double dy = fy[c] - ty;
-                double dz = fz[c] - tz;
-                double d = dx * dx + dy * dy + dz * dz;
-                if (d < bestDist) {
-                    bestDist = d;
-                    best = c;
+            float bestDot = -2.0f;
+            for (int s = 0; s < slots; s++) {
+                if (taken[s]) {
+                    continue;
+                }
+                float dot = dirs[3 * s] * hx + dirs[3 * s + 1] * hy + dirs[3 * s + 2] * hz;
+                if (dot > bestDot) {
+                    bestDot = dot;
+                    best = s;
                 }
             }
-
-            blocks.add(absorbed.get(i));
-            positions.add(new Vec3(fx[best], fy[best], fz[best]));
-            quaternions.add(new Quaternionf());
-            placed++;
-
-            free--;
-            fx[best] = fx[free];
-            fy[best] = fy[free];
-            fz[best] = fz[free];
+            taken[best] = true;
+            takenCount++;
+            shell.set(best, absorbed.get(i));
         }
-
-        // Nothing new to show (shell already full): do not touch the synced lists, so nothing is re-sent.
-        if (placed > 0) {
-            data.set(SPHERICAL_PLAYER_BLOCK_LIST, blocks, true);
-            data.set(SPHERICAL_PLAYER_POSITION_LIST, positions, true);
-            data.set(SPHERICAL_PLAYER_QUATERNION_LIST, quaternions, true);
-            data.set(SPHERICAL_PLAYER_BLOCK_COUNT, data.get(SPHERICAL_PLAYER_BLOCK_COUNT) + placed);
-            katamariIO$binRadiiDirty = true;
-        }
-        if (placed > 0 || sizeChanged) {
-            katamariIO$pruneDataParameterByRadius(entity);
-        }
+        katamariIO$shellDirty = true;
     }
 
     @Unique
-    private static void katamariIO$truncate(List<?> list, int size) {
-        while (list.size() > size) {
-            list.remove(list.size() - 1);
+    private List<Block> katamariIO$getShell(SynchedEntityData data) {
+        if (katamariIO$shell == null) {
+            katamariIO$shell = new ArrayList<>(data.get(SPHERICAL_PLAYER_BLOCK_LIST));
+        }
+        return katamariIO$shell;
+    }
+
+    /** New shell with {@code slots} blocks; every new slot takes the block of the nearest old slot (colours stay put). */
+    @Unique
+    private static List<Block> katamariIO$resampleShell(List<Block> old, int slots, List<Block> fallback) {
+        List<Block> result = new ArrayList<>(slots);
+        int oldCount = old.size();
+        if (oldCount > 0) {
+            float[] oldDirs = KatamariShell.directions(oldCount);
+            float[] newDirs = KatamariShell.directions(slots);
+            for (int s = 0; s < slots; s++) {
+                float nx = newDirs[3 * s];
+                float ny = newDirs[3 * s + 1];
+                float nz = newDirs[3 * s + 2];
+                int best = 0;
+                float bestDot = -2.0f;
+                for (int o = 0; o < oldCount; o++) {
+                    float dot = oldDirs[3 * o] * nx + oldDirs[3 * o + 1] * ny + oldDirs[3 * o + 2] * nz;
+                    if (dot > bestDot) {
+                        bestDot = dot;
+                        best = o;
+                    }
+                }
+                result.add(old.get(best));
+            }
+        } else {
+            int pool = fallback.size();
+            for (int s = 0; s < slots; s++) {
+                result.add(fallback.get(Math.floorMod(s * 0x9E3779B1, pool)));
+            }
+        }
+        return result;
+    }
+
+    /** Server only: keeps the slot count in line with the size and syncs the shell at most every 4 ticks. */
+    @Unique
+    private void katamariIO$serverShellTick(Player entity) {
+        if (entity.tickCount % 4 != 0) {
+            return;
+        }
+        SynchedEntityData data = entity.getEntityData();
+        List<Block> shell = katamariIO$getShell(data);
+        if (!shell.isEmpty()) {
+            int slots = KatamariShell.slotCount(data.get(sphericalPlayerMod$SIZE));
+            if (shell.size() != slots) {
+                katamariIO$shell = katamariIO$resampleShell(shell, slots, shell);
+                katamariIO$shellDirty = true;
+            }
+        }
+        if (katamariIO$shellDirty) {
+            katamariIO$shellDirty = false;
+            data.set(SPHERICAL_PLAYER_BLOCK_LIST, new ArrayList<>(katamariIO$shell), true);
         }
     }
 
@@ -518,6 +486,8 @@ public abstract class PlayerMixin implements ICustomPlayerData {
         entity.getEntityData().set(SPHERICAL_PLAYER_POSITION_LIST, new ArrayList<>(), true);
         entity.getEntityData().set(SPHERICAL_PLAYER_QUATERNION_LIST, new ArrayList<>(), true);
         entity.getEntityData().set(SPHERICAL_PLAYER_BLOCK_COUNT, 0);
+        katamariIO$shell = null;
+        katamariIO$shellDirty = false;
         katamariIO$binRadiiDirty = true;
     }
 
@@ -621,63 +591,5 @@ public abstract class PlayerMixin implements ICustomPlayerData {
         }
 
         return latIndex * KATAMARI_COLLISION_LON_BINS + lonIndex;
-    }
-
-    @Unique
-    private void katamariIO$pruneDataParameterByRadius(Player entity) {
-        float collisionRadius = entity.getEntityData().get(sphericalPlayerMod$SIZE) / 2.0f;
-        float cutoffRadius = Math.max(0.0f, collisionRadius - KATAMARI_DP_CUTOFF_OFFSET);
-
-        List<Block> blocks = entity.getEntityData().get(SPHERICAL_PLAYER_BLOCK_LIST);
-        List<Quaternionf> quaternions = entity.getEntityData().get(SPHERICAL_PLAYER_QUATERNION_LIST);
-        List<Vec3> positions = entity.getEntityData().get(SPHERICAL_PLAYER_POSITION_LIST);
-        int size = Math.min(blocks.size(), Math.min(quaternions.size(), positions.size()));
-
-        List<Block> keptBlocks = new ArrayList<>(size);
-        List<Quaternionf> keptQuaternions = new ArrayList<>(size);
-        List<Vec3> keptPositions = new ArrayList<>(size);
-        boolean changed = false;
-
-        for (int i = 0; i < size; i++) {
-            Vec3 pos = positions.get(i);
-            double blockOuterRadius = pos.length() + KATAMARI_BLOCK_EXTENT;
-            if (blockOuterRadius < cutoffRadius) {
-                changed = true;
-                continue;
-            }
-            keptBlocks.add(blocks.get(i));
-            keptQuaternions.add(quaternions.get(i));
-            keptPositions.add(pos);
-        }
-
-        if (keptBlocks.size() > KATAMARI_MAX_ATTACHED_BLOCKS) {
-            Integer[] order = new Integer[keptBlocks.size()];
-            for (int i = 0; i < order.length; i++) {
-                order[i] = i;
-            }
-            final List<Vec3> positionsRef = keptPositions;
-            java.util.Arrays.sort(order, (x, y) -> Double.compare(positionsRef.get(y).lengthSqr(), positionsRef.get(x).lengthSqr()));
-            List<Block> cappedBlocks = new ArrayList<>(KATAMARI_MAX_ATTACHED_BLOCKS);
-            List<Quaternionf> cappedQuaternions = new ArrayList<>(KATAMARI_MAX_ATTACHED_BLOCKS);
-            List<Vec3> cappedPositions = new ArrayList<>(KATAMARI_MAX_ATTACHED_BLOCKS);
-            for (int i = 0; i < KATAMARI_MAX_ATTACHED_BLOCKS; i++) {
-                int k = order[i];
-                cappedBlocks.add(keptBlocks.get(k));
-                cappedQuaternions.add(keptQuaternions.get(k));
-                cappedPositions.add(keptPositions.get(k));
-            }
-            keptBlocks = cappedBlocks;
-            keptQuaternions = cappedQuaternions;
-            keptPositions = cappedPositions;
-            changed = true;
-        }
-
-        if (!changed) {
-            return;
-        }
-
-        entity.getEntityData().set(SPHERICAL_PLAYER_BLOCK_LIST, keptBlocks, true);
-        entity.getEntityData().set(SPHERICAL_PLAYER_QUATERNION_LIST, keptQuaternions, true);
-        entity.getEntityData().set(SPHERICAL_PLAYER_POSITION_LIST, keptPositions, true);
     }
 }

@@ -53,13 +53,18 @@ Kod 1.20.1 API'sinden **Minecraft 1.21.11 (Fabric)** API'sine taşındı:
 
 Bu port derleme ortamı olmadan yazıldı; ilk `./gradlew build` çıktısındaki hatalara göre küçük düzeltmeler gerekebilir.
 
-## Büyüme ve blok kabuğu (v1.0.3)
+## Büyüme ve blok kabuğu (v1.0.4)
 
-- Büyüme hızı `PlayerMixin.KATAMARI_GROWTH_VOLUME_PER_BLOCK` ile ayarlanır (şu an `0.05`; küçültürsen daha yavaş büyür).
-- Yenen bloklar rastgele yapışmaz; topun yerel eksen ağında (tam sayı hücreler) dış kabuktaki en yakın boş hücreye
-  yerleşir. Böylece kabuk üst üste binmeden, boşluksuz ve tam yuvarlak oluşur. Görünen çekirdek küre her zaman
-  hitbox boyutunu takip eder.
-- Optimizasyon: sadece küre taranır, tarama aralığı boyuta göre 1/2/4 tick, bloklar tek seferde (batch) eklenir ve
-  istemciye tek seferde senkronlanır, ağ verisi ~7 kat küçüldü, istemci `RemoveBlockPacket` göndermez.
-- Görünüm: sunucu blokları tam sayı hücrelerde tutar, istemci ise her bloğu küre yüzeyine izdüşürüp yüzeye teğet
-  döndürerek çizer (`KatamariPlayerRenderer`: `SHELL_INSET`, `DEPTH_FACTOR`, `BLOCK_SCALE`), böylece siluet kareli değil yuvarlak olur.
+- Büyüme hızı `PlayerMixin.KATAMARI_GROWTH_VOLUME_PER_BLOCK` ile ayarlanır (şu an `0.012`; küçültürsen daha yavaş büyür).
+- Çekirdek (dokulu) top **büyümez**: sabit yarıçap `KatamariShell.CORE_RADIUS` (1.0). Sadece hitbox ve blok kabuğu büyür.
+- Blok kabuğu, çekirdeğin etrafında **tek ve tam bir katmandır**: bloklar eşit aralıklı bir küre (Fibonacci küresi)
+  üzerinde durur ve yüzeye teğet yatar (`KatamariShell`). Böylece top her zaman tam yuvarlaktır, boşluk kalmaz.
+  Yenen blok, vurulduğu yöne en yakın slottaki bloğun yerine geçer.
+- Slot sayısı sadece boyuta bağlıdır; sunucu ve istemci aynı formülü kullanır. Sunucu sadece blok listesini
+  (slot başına 1 blok) en fazla 4 tick'te bir senkronlar, konum/rotasyon listeleri artık gönderilmez.
+- Kayıt formatı küçüldü: sadece blok türleri saklanır (eski kayıtlar sorunsuz okunur).
+- Optimizasyon: sadece küre taranır, tarama aralığı boyuta göre 1/2/4 tick, bloklar tek seferde (batch) eklenir.
+
+## Kaynak projeden farklar
+
+Bu bölüm yukarıdaki atıf bölümünü değiştirmez; KatamariIO'nun kaynak kodu ve MIT lisansı korunmuştur.
