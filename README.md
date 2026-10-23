@@ -61,3 +61,5 @@ Bu port derleme ortamı olmadan yazıldı; ilk `./gradlew build` çıktısındak
   hitbox boyutunu takip eder.
 - Optimizasyon: sadece küre taranır, tarama aralığı boyuta göre 1/2/4 tick, bloklar tek seferde (batch) eklenir ve
   istemciye tek seferde senkronlanır, ağ verisi ~7 kat küçüldü, istemci `RemoveBlockPacket` göndermez.
+- Görünüm: sunucu blokları tam sayı hücrelerde tutar, istemci ise her bloğu küre yüzeyine izdüşürüp yüzeye teğet
+  döndürerek çizer (`KatamariPlayerRenderer`: `SHELL_INSET`, `DEPTH_FACTOR`, `BLOCK_SCALE`), böylece siluet kareli değil yuvarlak olur.

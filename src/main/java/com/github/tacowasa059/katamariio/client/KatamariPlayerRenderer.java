@@ -26,6 +26,13 @@ public final class KatamariPlayerRenderer {
      * (The server keeps them a bit longer so the surface never shows holes while the ball is growing.)
      */
     private static final float HIDDEN_DEPTH = 1.0f;
+    /** Blocks of the outer layer are centred this far below the hitbox radius. */
+    private static final float SHELL_INSET = 0.3f;
+    /** How strongly a block's lattice depth moves it radially (keeps layers smooth while the ball grows). */
+    private static final float DEPTH_FACTOR = 0.35f;
+    /** Blocks are drawn slightly larger than 1 so neighbours overlap and no gaps show between them. */
+    private static final float BLOCK_SCALE = 1.12f;
+    private static final float HALF_PI = (float) (Math.PI / 2.0);
 
     private KatamariPlayerRenderer() {
     }
@@ -80,38 +87,55 @@ public final class KatamariPlayerRenderer {
         double tmpSize = renderSize;
         List<Vec3> vec3List = playerData.katamariIO$getSphericalPlayerPositions();
         List<Block> blockList = playerData.katamariIO$getSphericalPlayerBlocks();
-        List<Quaternionf> quaternionfList = playerData.katamariIO$getSphericalPlayerQuaternions();
         int lodStep = getLodStepForPlayer(player);
-        int sharedSize = Math.min(vec3List.size(), Math.min(blockList.size(), quaternionfList.size()));
+        int sharedSize = Math.min(vec3List.size(), blockList.size());
 
         float minLen = radius - HIDDEN_DEPTH;
         double minLenSq = minLen > 0.0f ? (double) minLen * minLen : -1.0;
 
+        // The server stores every block in a cell of an integer lattice (guarantees a full shell without overlaps).
+        // Here the cell is only used as a direction: the block is projected onto a perfectly round sphere and
+        // turned so its face lies flat on the surface, so the silhouette is round instead of stair-stepped.
+        final float shellRadius = radius - SHELL_INSET;
+        Quaternionf tilt = new Quaternionf();
+        boolean drewAny = false;
+
         for (int i = 0; i < sharedSize; i++) {
             Vec3 vec = vec3List.get(i);
             double lenSq = vec.lengthSqr();
-            if (lenSq < minLenSq) {
+            if (lenSq < 1.0E-6 || lenSq < minLenSq) {
                 continue;
             }
             if (lodStep > 1 && !shouldRenderByHash(vec, i, player.getId(), lodStep)) {
                 continue;
             }
             Block block = blockList.get(i);
-            Quaternionf blockRotation = quaternionfList.get(i);
+
+            double len = Math.sqrt(lenSq);
+            float nx = (float) (vec.x / len);
+            float ny = (float) (vec.y / len);
+            float nz = (float) (vec.z / len);
+
+            int h = hashCell(vec);
+            float roll = ((h >>> 2) & 1023) / 1024.0f * HALF_PI;
+            float jitter = ((h >>> 12) & 15) / 15.0f * 0.1f;
+            float placeRadius = shellRadius + DEPTH_FACTOR * (float) (len - radius) + jitter;
+
+            tilt.rotationTo(0.0f, 1.0f, 0.0f, nx, ny, nz).rotateY(roll);
 
             poseStack.pushPose();
-            poseStack.translate(vec.x, vec.y, vec.z);
-            if (!isIdentity(blockRotation)) {
-                poseStack.mulPose(blockRotation);
-            }
-            // A block model spans (0,0,0)..(1,1,1); centre it on the stored position.
+            poseStack.translate(nx * placeRadius, ny * placeRadius, nz * placeRadius);
+            poseStack.mulPose(tilt);
+            poseStack.scale(BLOCK_SCALE, BLOCK_SCALE, BLOCK_SCALE);
+            // A block model spans (0,0,0)..(1,1,1); centre it on the placed position.
             poseStack.translate(-0.5, -0.5, -0.5);
             collector.submitBlock(poseStack, block.defaultBlockState(), packedLight, overlay, 0);
             poseStack.popPose();
+            drewAny = true;
+        }
 
-            if (isLocalPlayer) {
-                tmpSize = Math.max(tmpSize, Math.sqrt(lenSq) * 2);
-            }
+        if (isLocalPlayer && drewAny) {
+            tmpSize = Math.max(tmpSize, 2.0 * (radius + 0.5));
         }
 
         if (isLocalPlayer) {
@@ -122,8 +146,12 @@ public final class KatamariPlayerRenderer {
         return true;
     }
 
-    private static boolean isIdentity(Quaternionf q) {
-        return q.x() == 0.0f && q.y() == 0.0f && q.z() == 0.0f && q.w() == 1.0f;
+    private static int hashCell(Vec3 vec) {
+        int h = (int) Math.round(vec.x) * 73856093 ^ (int) Math.round(vec.y) * 19349663 ^ (int) Math.round(vec.z) * 83492791;
+        h ^= h >>> 13;
+        h *= 0x5bd1e995;
+        h ^= h >>> 15;
+        return h;
     }
 
     private static int getLodStepForPlayer(Player player) {
