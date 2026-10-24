@@ -1,6 +1,5 @@
 package com.github.tacowasa059.katamariio.common.event;
 
-import com.github.tacowasa059.katamariio.KatamariIO;
 import com.github.tacowasa059.katamariio.common.accessors.ICustomPlayerData;
 import com.github.tacowasa059.katamariio.common.networks.ModNetwork;
 import net.minecraft.server.level.ServerPlayer;
@@ -13,10 +12,13 @@ public class PlayerRespawnEventListener {
 
         newPlayerData.katamariIO$setFlagAndSizeAndRestitution(
                 originalPlayerData.katamariIO$getFlag(),
-                KatamariIO.DEFAULT_BALL_SIZE,
-                KatamariIO.DEFAULT_BALL_SIZE,
+                originalPlayerData.katamariIO$getSize(),
+                originalPlayerData.katamariIO$getRenderSize(),
                 originalPlayerData.katamariIO$getRestitutionCoefficient());
-        newPlayerData.katamariIO$clearAttachedBlocks();
+        // Size and attached blocks are kept after death / dimension change.
+        newPlayerData.katamariIO$restoreBlocks(
+                originalPlayerData.katamariIO$getSphericalPlayerBlocks(),
+                originalPlayerData.katamariIO$getAttachedBlockCount());
     }
 
     public static void onPlayerLogin(ServerPlayer player) {

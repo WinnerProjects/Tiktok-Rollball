@@ -2,6 +2,7 @@ package com.github.tacowasa059.katamariio.mixin.common;
 
 import com.github.tacowasa059.katamariio.KatamariIO;
 import com.github.tacowasa059.katamariio.common.KatamariAbsorb;
+import com.github.tacowasa059.katamariio.common.KatamariEffects;
 import com.github.tacowasa059.katamariio.common.KatamariMovement;
 import com.github.tacowasa059.katamariio.common.KatamariShell;
 import com.github.tacowasa059.katamariio.common.KatamariWin;
@@ -75,7 +76,7 @@ public abstract class PlayerMixin implements ICustomPlayerData {
     private static final float KATAMARI_BLOCK_EXTENT = 0.5f;
     /** Volume every eaten block adds to the ball (1.0 = a full block). Lower = slower growth. */
     @Unique
-    private static final float KATAMARI_GROWTH_VOLUME_PER_BLOCK = 0.012f;
+    private static final float KATAMARI_GROWTH_VOLUME_PER_BLOCK = 0.025f;
     @Unique
     private static final float KATAMARI_MAX_SIZE = 20.0f;
     @Unique
@@ -120,6 +121,7 @@ public abstract class PlayerMixin implements ICustomPlayerData {
             katamariIO$serverShellTick(player);
             if (player instanceof ServerPlayer serverPlayer) {
                 KatamariWin.tick(serverPlayer);
+                KatamariEffects.tick(serverPlayer);
             }
         }
     }
@@ -503,7 +505,20 @@ public abstract class PlayerMixin implements ICustomPlayerData {
 
     @Override
     public List<Block> katamariIO$getSphericalPlayerBlocks() {
+        // On the server the master copy may be a few ticks ahead of the synced list.
+        if (katamariIO$shell != null) {
+            return katamariIO$shell;
+        }
         return ((Player) (Object) this).getEntityData().get(SPHERICAL_PLAYER_BLOCK_LIST);
+    }
+
+    @Override
+    public void katamariIO$restoreBlocks(List<Block> blocks, int blockCount) {
+        SynchedEntityData data = ((Player) (Object) this).getEntityData();
+        data.set(SPHERICAL_PLAYER_BLOCK_LIST, new ArrayList<>(blocks), true);
+        data.set(SPHERICAL_PLAYER_BLOCK_COUNT, blockCount);
+        katamariIO$shell = null;
+        katamariIO$shellDirty = false;
     }
 
     /**

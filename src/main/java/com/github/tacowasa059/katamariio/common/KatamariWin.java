@@ -35,7 +35,7 @@ public final class KatamariWin {
     private static final int START_VALUE = 15;
     /** Real time per number for 15..4: exactly 1 second, independent of the server tick rate. */
     private static final long NORMAL_MILLIS = 1000L;
-    /** Ticks per number for 3, 2, 1 (unchanged: 50 ticks = 2.5 seconds). */
+    /** Ticks per number for 3, 2, 1 (50 ticks = 2.5 seconds). */
     private static final int SLOW_TICKS = 50;
     private static final long SLOW_MILLIS = SLOW_TICKS * 50L;
 

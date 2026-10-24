@@ -1,6 +1,8 @@
 package com.github.tacowasa059.katamariio.common.commands;
 
 import com.github.tacowasa059.katamariio.KatamariIO;
+import com.github.tacowasa059.katamariio.common.KatamariEffects;
+import com.github.tacowasa059.katamariio.common.networks.ModNetwork;
 import com.github.tacowasa059.katamariio.common.accessors.ICustomPlayerData;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.BoolArgumentType;
@@ -13,9 +15,14 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 
 import java.util.Collection;
+import java.util.List;
 
 public class KatamariCommands {
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
+        registerTop(dispatcher);
+        registerJumpscare(dispatcher);
+        registerBlind(dispatcher, "kör");
+        registerBlind(dispatcher, "kor");
         dispatcher.register(Commands.literal("katamari")
                 .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                 .then(Commands.literal("size")
@@ -70,16 +77,8 @@ public class KatamariCommands {
                                             Collection<ServerPlayer> players = EntityArgument.getPlayers(ctx, "targets");
                                             players.forEach(p -> {
                                                 ICustomPlayerData data = (ICustomPlayerData) p;
-                                                if (flag) {
-                                                    data.katamariIO$setFlag(true);
-                                                } else {
-                                                    data.katamariIO$setFlagAndSizeAndRestitution(
-                                                            false,
-                                                            KatamariIO.DEFAULT_BALL_SIZE,
-                                                            KatamariIO.DEFAULT_BALL_SIZE,
-                                                            data.katamariIO$getRestitutionCoefficient()
-                                                    );
-                                                }
+                                                // The size is kept when the ball mode is switched off.
+                                                data.katamariIO$setFlag(flag);
                                             });
                                             ChatFormatting flagColor = flag ? ChatFormatting.AQUA : ChatFormatting.RED;
                                             ctx.getSource().sendSuccess(() -> Component.literal(
@@ -106,5 +105,59 @@ public class KatamariCommands {
                                                     ChatFormatting.AQUA + players.size() + ChatFormatting.GREEN + " player(s)."), true);
                                     return players.size();
                                 }))));
+    }
+
+    /** /top: switches the ball mode on/off (for yourself; operators may add a target). The size is kept. */
+    private static void registerTop(CommandDispatcher<CommandSourceStack> dispatcher) {
+        dispatcher.register(Commands.literal("top")
+                .executes(ctx -> toggleBall(ctx.getSource(), List.of(ctx.getSource().getPlayerOrException())))
+                .then(Commands.argument("targets", EntityArgument.players())
+                        .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                        .executes(ctx -> toggleBall(ctx.getSource(), EntityArgument.getPlayers(ctx, "targets")))));
+    }
+
+    private static int toggleBall(CommandSourceStack source, Collection<ServerPlayer> players) {
+        for (ServerPlayer player : players) {
+            ICustomPlayerData data = (ICustomPlayerData) player;
+            boolean enabled = !data.katamariIO$getFlag();
+            data.katamariIO$setFlag(enabled);
+            player.sendSystemMessage(Component.literal(enabled ? "Top modu açıldı." : "Top modu kapandı.")
+                    .withStyle(enabled ? ChatFormatting.GREEN : ChatFormatting.YELLOW));
+        }
+        return players.size();
+    }
+
+    /** /kör: the screen goes fully black for 10 seconds; running it again adds 10 more seconds. */
+    private static void registerBlind(CommandDispatcher<CommandSourceStack> dispatcher, String name) {
+        dispatcher.register(Commands.literal(name)
+                .executes(ctx -> blind(List.of(ctx.getSource().getPlayerOrException())))
+                .then(Commands.argument("targets", EntityArgument.players())
+                        .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                        .executes(ctx -> blind(EntityArgument.getPlayers(ctx, "targets")))));
+    }
+
+    private static int blind(Collection<ServerPlayer> players) {
+        for (ServerPlayer player : players) {
+            int seconds = KatamariEffects.addBlind(player, KatamariEffects.BLIND_SECONDS);
+            player.sendSystemMessage(Component.literal("Kör oldun! Kalan süre: " + seconds + " sn")
+                    .withStyle(ChatFormatting.DARK_GRAY));
+        }
+        return players.size();
+    }
+
+    /** /jumpscare: plays the jumpscare video on your own screen (operators may add targets). */
+    private static void registerJumpscare(CommandDispatcher<CommandSourceStack> dispatcher) {
+        dispatcher.register(Commands.literal("jumpscare")
+                .executes(ctx -> jumpscare(List.of(ctx.getSource().getPlayerOrException())))
+                .then(Commands.argument("targets", EntityArgument.players())
+                        .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                        .executes(ctx -> jumpscare(EntityArgument.getPlayers(ctx, "targets")))));
+    }
+
+    private static int jumpscare(Collection<ServerPlayer> players) {
+        for (ServerPlayer player : players) {
+            ModNetwork.sendJumpscare(player);
+        }
+        return players.size();
     }
 }

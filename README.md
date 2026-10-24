@@ -55,7 +55,7 @@ Bu port derleme ortamı olmadan yazıldı; ilk `./gradlew build` çıktısındak
 
 ## Büyüme ve blok kabuğu (v1.0.4)
 
-- Büyüme hızı `PlayerMixin.KATAMARI_GROWTH_VOLUME_PER_BLOCK` ile ayarlanır (şu an `0.012`; küçültürsen daha yavaş büyür).
+- Büyüme hızı `PlayerMixin.KATAMARI_GROWTH_VOLUME_PER_BLOCK` ile ayarlanır (şu an `0.025`; küçültürsen daha yavaş büyür).
 - Çekirdek (dokulu) top **büyümez**: sabit yarıçap `KatamariShell.CORE_RADIUS` (1.0). Sadece hitbox ve blok kabuğu büyür.
 - Blok kabuğu, çekirdeğin etrafında **tek ve tam bir katmandır**: bloklar eşit aralıklı bir küre (Fibonacci küresi)
   üzerinde durur ve yüzeye teğet yatar (`KatamariShell`). Böylece top her zaman tam yuvarlaktır, boşluk kalmaz.
@@ -64,6 +64,17 @@ Bu port derleme ortamı olmadan yazıldı; ilk `./gradlew build` çıktısındak
   (slot başına 1 blok) en fazla 4 tick'te bir senkronlar, konum/rotasyon listeleri artık gönderilmez.
 - Kayıt formatı küçüldü: sadece blok türleri saklanır (eski kayıtlar sorunsuz okunur).
 - Optimizasyon: sadece küre taranır, tarama aralığı boyuta göre 1/2/4 tick, bloklar tek seferde (batch) eklenir.
+
+## Komutlar ve efektler (v1.0.5)
+
+- `/top`: top modunu aç/kapat (herkes kendisi için; operatör `/top <oyuncu>` ile başkası için). Boyut ve bloklar korunur.
+- `/kör` (veya `/kor`): ekran 10 sn tamamen kararır, tekrar yazılırsa +10 sn eklenir. Kalan süre ekranın ortasında
+  büyük pikselli yazıyla `KÖR:(sayı)` olarak gösterilir, her sayı tam 1 sn. Operatör `/kör <oyuncu>` kullanabilir.
+- `/jumpscare`: verilen videoyu (şeffaf arka planlı kareler + ses) ekranda bir kez oynatır. Operatör `/jumpscare <oyuncu>` kullanabilir.
+  Kareler `assets/rollball/textures/jumpscare/frame_NN.png`, ses `assets/rollball/sounds/jumpscare.ogg`.
+- Top modu açıkken sınırsız gece görüşü verilir, kapatınca gider.
+- Boyut ve bloklar ölünce, boyut değişince ve top modu kapatılıp açılınca sıfırlanmaz (sadece `/katamari resetBlocks`).
+- Win sayacı eskisi gibi: 15..4 birer saniye, 3-2-1 yavaş.
 
 ## Kaynak projeden farklar
 

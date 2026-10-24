@@ -14,9 +14,19 @@ public final class ModNetwork {
     public static void register() {
         PayloadTypeRegistry.playC2S().register(RemoveBlockPacket.TYPE, RemoveBlockPacket.STREAM_CODEC);
         PayloadTypeRegistry.playS2C().register(S2CPlayerPacket.TYPE, S2CPlayerPacket.STREAM_CODEC);
+        PayloadTypeRegistry.playS2C().register(BlindPacket.TYPE, BlindPacket.STREAM_CODEC);
+        PayloadTypeRegistry.playS2C().register(JumpscarePacket.TYPE, JumpscarePacket.STREAM_CODEC);
 
         ServerPlayNetworking.registerGlobalReceiver(RemoveBlockPacket.TYPE,
                 (payload, context) -> payload.handle(context.player()));
+    }
+
+    public static void sendJumpscare(ServerPlayer player) {
+        ServerPlayNetworking.send(player, new JumpscarePacket());
+    }
+
+    public static void sendBlind(ServerPlayer player, int remainingMillis) {
+        ServerPlayNetworking.send(player, new BlindPacket(Math.max(0, remainingMillis)));
     }
 
     public static void sendInitialData(ServerPlayer player,

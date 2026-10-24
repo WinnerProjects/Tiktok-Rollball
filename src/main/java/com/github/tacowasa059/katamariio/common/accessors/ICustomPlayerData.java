@@ -32,6 +32,8 @@ public interface ICustomPlayerData {
     void katamariIO$absorbBlocks(List<Block> blocks, List<Vec3> localHits);
     int katamariIO$getAttachedBlockCount();
     void katamariIO$clearAttachedBlocks();
+    /** Copies the block shell (e.g. to the new player object after a respawn) without resetting anything else. */
+    void katamariIO$restoreBlocks(List<Block> blocks, int blockCount);
 
     List<Vec3> katamariIO$getSphericalPlayerPositions();
     List<Quaternionf> katamariIO$getSphericalPlayerQuaternions();
